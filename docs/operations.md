@@ -31,6 +31,7 @@ bin/tos-git log --oneline
 
 ## GitHub politikası
 
+- Depo: <https://github.com/Gebetto571/trading-os>
 - Depo varsayılan olarak **private** oluşturulur.
 - `main` doğrudan günlük geliştirme için kullanılmaz; değişiklikler dal ve inceleme üzerinden birleşir.
 - GitHub uzak yedektir ama Drive'ın yerine geçmez.

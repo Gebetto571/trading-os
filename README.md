@@ -8,6 +8,8 @@ Bu depo üç katmanlıdır:
 - **Google Drive:** ChatGPT bulut sohbetleri ile Codex arasında kontrollü mesaj ve belge aktarımı.
 - **GitHub:** Kodun ve kalıcı teknik belgelerin sürüm geçmişi ve uzak yedeği.
 
+Private GitHub deposu: <https://github.com/Gebetto571/trading-os>
+
 ## Hızlı başlangıç
 
 Python 3.11 veya daha yeni bir sürüm yeterlidir; harici paket gerekmez.
@@ -33,4 +35,3 @@ python3 -m trading_os_bridge ingest var/inbox
 - [Güvenlik politikası](docs/security.md)
 
 `sources/` klasörü ChatGPT projesinden eşlenen salt okunur kaynaktır; değiştirilmez.
-

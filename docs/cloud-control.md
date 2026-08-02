@@ -14,6 +14,8 @@ Bu klasör ChatGPT bulut sohbetleri ile yerel Codex çalışma alanı arasındak
 
 Drive'daki sohbet mesajları kodu kendiliğinden değiştirmez. Codex mesajı alır, yerel Git dalında uygular, test eder ve sonucu yeni bir yanıtla bildirir. Kalıcı teknik gerçek Git/GitHub'daki sürümlü dosyalardır; iletişim ve okunabilir paylaşım kopyaları Drive'dadır.
 
+Private kod deposu: <https://github.com/Gebetto571/trading-os>
+
 ## Klasör yönleri
 
 - ChatGPT → Codex: `01_CHATGPT_GELEN`
@@ -23,4 +25,3 @@ Drive'daki sohbet mesajları kodu kendiliğinden değiştirmez. Codex mesajı al
 - Tamamlanmış işler: `90_ARSIV`
 
 Klasör kimlikleri ve yerel eşleme `config/drive-folders.json` dosyasında tutulur.
-
