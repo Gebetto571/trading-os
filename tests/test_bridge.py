@@ -29,6 +29,8 @@ class StoreTests(unittest.TestCase):
             self.assertTrue(store.put_message(message, "inbound", "received"))
             self.assertFalse(store.put_message(message, "inbound", "received"))
             self.assertEqual(len(store.list_messages()), 1)
+            self.assertEqual(store.get_message(message["id"])["status"], "received")
+            self.assertIsNone(store.get_message(str(uuid.uuid4())))
 
     def test_migration_is_repeatable(self):
         with tempfile.TemporaryDirectory() as directory:

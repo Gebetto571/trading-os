@@ -114,6 +114,15 @@ def command_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_check(args: argparse.Namespace) -> int:
+    row = store().get_message(args.id)
+    if row is None:
+        print(json.dumps({"known": False, "id": args.id}))
+        return 1
+    print(json.dumps({"known": True, **dict(row)}, ensure_ascii=False))
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="Trading OS ChatGPT-Codex iletişim köprüsü")
     commands = result.add_subparsers(dest="command", required=True)
@@ -140,10 +149,13 @@ def parser() -> argparse.ArgumentParser:
     status_cmd.add_argument("id")
     status_cmd.add_argument("status", choices=VALID_STATUSES)
     status_cmd.set_defaults(func=command_status)
+
+    check_cmd = commands.add_parser("check", help="Mesaj daha önce kaydedilmiş mi kontrol et")
+    check_cmd.add_argument("id")
+    check_cmd.set_defaults(func=command_check)
     return result
 
 
 def main() -> int:
     args = parser().parse_args()
     return args.func(args)
-

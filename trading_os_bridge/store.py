@@ -84,3 +84,13 @@ class Store:
             )
             return bool(cursor.rowcount)
 
+    def get_message(self, message_id: str) -> sqlite3.Row | None:
+        with self.connect() as connection:
+            return connection.execute(
+                """
+                SELECT id, created_at, received_at, sender, recipient, message_type,
+                       status, subject, correlation_id, direction, source_uri, updated_at
+                FROM messages WHERE id = ?
+                """,
+                (message_id,),
+            ).fetchone()

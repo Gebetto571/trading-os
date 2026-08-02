@@ -33,5 +33,6 @@ python3 -m trading_os_bridge ingest var/inbox
 - [Veritabanı tasarımı](docs/database.md)
 - [Drive, Git ve GitHub çalışma düzeni](docs/operations.md)
 - [Güvenlik politikası](docs/security.md)
+- [Talimatla çalışan Drive–Codex köprüsü](docs/automation-runbook.md)
 
 `sources/` klasörü ChatGPT projesinden eşlenen salt okunur kaynaktır; değiştirilmez.

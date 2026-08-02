@@ -46,3 +46,4 @@ Aynı `id` ikinci kez gelirse yeni kayıt yaratılmaz. Böylece yeniden denemele
 
 Drive'daki `Trading OS/00_KONTROL_MERKEZI` belgesini oku. Codex'e görev verirken protokole uygun JSON üretip `01_CHATGPT_GELEN` klasörüne koy. Codex yanıtlarını `02_CODEX_GELEN` klasöründen oku. Kabul edilen kalıcı kararları `03_KARARLAR` klasörüne taşı veya yeni karar kaydı oluştur.
 
+Codex gelen kutusunu yalnız kullanıcının açık talimatıyla kontrol eder. Kullanıcı “Trading OS gelen kutusunu kontrol et” dediğinde yeni mesajlar alınır; UUID değeri daha önce işlendiyse görev tekrarlanmaz.

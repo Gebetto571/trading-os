@@ -24,4 +24,8 @@ Private kod deposu: <https://github.com/Gebetto571/trading-os>
 - Mimari ve protokol: `04_TEKNIK_TASARIM`
 - Tamamlanmış işler: `90_ARSIV`
 
+## Codex'i çalıştırma
+
+Codex Drive'ı kendiliğinden taramaz. Yerel Codex sohbetinde `Trading OS gelen kutusunu kontrol et` talimatı verildiğinde yeni görevleri alır, işler ve cevabı Drive'a bırakır.
+
 Klasör kimlikleri ve yerel eşleme `config/drive-folders.json` dosyasında tutulur.
