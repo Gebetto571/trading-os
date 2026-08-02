@@ -1,0 +1,28 @@
+# Çalışma verileri ve sırlar
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+var/inbox/*
+var/outbox/*
+var/archive/*
+!var/inbox/.gitkeep
+!var/outbox/.gitkeep
+!var/archive/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# İşletim sistemi / editör
+.DS_Store
+.idea/
+.vscode/
+
+# Codex proje aynası .git konumunu korur; yerel metadata burada tutulur
+.local-git/
+

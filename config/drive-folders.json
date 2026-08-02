@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "root": {
+    "id": "1HlL02y2O8OeONMG1OGBkD7sTLConT7ZN",
+    "name": "Trading OS",
+    "url": "https://drive.google.com/drive/folders/1HlL02y2O8OeONMG1OGBkD7sTLConT7ZN"
+  },
+  "folders": {
+    "control": "1jLcHkt_ejG7HjXdyZEcYQwU3oQa7sQKu",
+    "from_chatgpt": "15Cam8bRRlplbVLp4W0uRahzQ2N22Oyp9",
+    "from_codex": "1zzRg0QITT9Z7Z17fMMvEVc9qNp5_9ks6",
+    "decisions": "13DHSKG4ZUaPdK9OTT3jHEwK3oJ-oHnAt",
+    "technical_design": "1CPQPXZAzaJ_MYoz6fC1kY48ThgddbcBd",
+    "reports": "17R23JhPpvng2rCimYBFTqB35mLqd1gxT",
+    "shared_outputs": "1uaGguOyDHJekEQ3dC9KWC57Dk8LSRwwX",
+    "archive": "1kkY1pDi9HM5y_GooskKG8qDwlZcfmHy8"
+  }
+}
+

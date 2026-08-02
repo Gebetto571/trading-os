@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trading-os.local/schemas/message.schema.json",
+  "title": "Trading OS Bridge Message",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "created_at", "sender", "recipient", "type", "subject", "body", "correlation_id", "artifacts", "metadata"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "format": "uuid"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "sender": {"type": "string", "minLength": 1, "maxLength": 80},
+    "recipient": {"type": "string", "minLength": 1, "maxLength": 80},
+    "type": {"enum": ["task", "response", "decision", "status", "error"]},
+    "subject": {"type": "string", "minLength": 1, "maxLength": 240},
+    "body": {"type": "string"},
+    "correlation_id": {"type": ["string", "null"]},
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "uri", "sha256"],
+        "properties": {
+          "name": {"type": "string"},
+          "uri": {"type": "string"},
+          "sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+        }
+      }
+    },
+    "metadata": {"type": "object"}
+  }
+}
+
