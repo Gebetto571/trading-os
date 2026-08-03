@@ -2,7 +2,7 @@
 id: TOS-DEC-004
 title: Merkezi Dosya Yönetim Anayasası
 status: sealed
-version: 1.3
+version: 1.4
 date: 2026-08-03
 last_updated: 2026-08-03
 authority: project-constitution
@@ -103,6 +103,62 @@ GitHub issue/commit/PR bağlantısı üzerinden ve yalnız açık kullanıcı ta
 | Büyük ek/başvuru belgesi | Yerel, Git dışı çalışma alanı; gerekiyorsa yalnız özeti Git'te |
 | Yerel sırlar, çalışma DB'si ve ham veri | Lokal; GitHub ve dış eşitleme dışında |
 
+### 7.1. Kanonik klasör yönlendirme tablosu
+
+Bir sohbet içerik üretmeden önce aşağıdaki tabloyu kullanır. Tabloda karşılığı
+bulunmayan bir içerik için klasör tahmin edilmez; `docs-manager` karar verir.
+
+| Ürün veya kayıt | Kanonik konum | GitHub | Varsayılan sorumlu |
+|---|---|---|---|
+| Kullanıcıya dönük uygulama | `apps/<uygulama>/` | Evet | `codex-dev` |
+| Rust çekirdeği veya adaptör | `crates/<bileşen>/` | Evet | `codex-dev` |
+| Ortak yazılım paketi | `packages/<paket>/` | Evet | `codex-dev` |
+| Köprü yazılımı | `trading_os_bridge/` | Evet | `codex-dev` |
+| Makinece doğrulanan sözleşme | `schemas/` | Evet | `codex-dev` |
+| Bileşene özgü DB geçişi | İlgili bileşenin `migrations/` klasörü | Evet | `codex-dev` |
+| Sistem/genel DB geçişi | `migrations/` | Evet | `codex-dev` |
+| Otomatik test | Kodun yanında veya `tests/` | Evet | `codex-dev` |
+| Sistem mimarisi | Mevcut `docs/architecture.md` veya `docs/architecture/` belgesi | Evet | `docs-manager` |
+| Operasyon ve çalışma talimatı | Mevcut `docs/operations.md` veya `docs/automation-runbook.md` | Evet | `docs-manager` |
+| Güvenlik kuralı | Mevcut `docs/security.md` | Evet | `docs-manager` |
+| Güncel proje durumu | `docs/status/CURRENT.md` | Evet | `docs-manager` |
+| Kalıcı doğrulama raporu | `docs/reports/`; yalnız ayrı yaşam döngüsü varsa | Evet | `docs-manager` |
+| Sohbete ait kalıcı karar/bilgi | Sohbetin mevcut `docs/decisions/chats/` kaydı | Evet | `docs-manager` |
+| Merkezi kural, sicil ve fihrist | `AGENTS.md` ve `docs/decisions/system/` | Evet | yalnız `docs-manager` |
+| Gelen görev, yanıt veya durum | Sohbet; gerekiyorsa `var/` altında JSON zarfı ve SQLite | Hayır | gönderen/alıcı rol |
+| Ham piyasa verisi ve türetilmiş veri | `data/` ve yerel PostgreSQL volume | Hayır | `codex-dev` / veri rolü |
+| Çalışma mesajları, arşiv ve karantina | `var/` | Hayır | `codex-dev` |
+| Anahtar, parola ve token | Kaynak kontrolü dışındaki güvenli yerel ortam | Hayır | kullanıcı |
+| ChatGPT proje kaynak aynası | `sources/`; salt okunur | Kaynak olarak izlenebilir, düzenlenemez | `external-sync` |
+
+Boş klasörler gelecekte kullanılacak diye oluşturulmaz. Yeni yazılım bileşeni gerçekten
+başladığında yalnız gereken klasör açılır. `data/`, `var/`, çalışma veritabanları,
+önbellekler ve sırlar Git'e eklenmez.
+
+### 7.2. Diğer sohbetlerin dosya teslim sözleşmesi
+
+Her Trading OS sohbeti işe başlarken rolünü `TOS-CHAT-REGISTRY` içinden seçer ve şu
+dört bilgiyi açıklar: `role_key`, görev amacı, kullanacağı mevcut dosyalar ve üretmek
+istediği çıktı. Sohbet dosya yazma yetkisine sahip değilse dosya oluşturmaz; ana ajana
+şu yapıda teslim verir:
+
+```text
+ROL: <role_key>
+GÖREV: <tek cümle>
+KALICI KAYIT GEREKİYOR MU: hayır | evet, gerekçesi
+GÜNCELLENECEK MEVCUT DOSYA: <yol veya docs-manager kararı gerekli>
+KOD HEDEFİ: <yol veya yok>
+BULGU/KARAR: <özlü içerik>
+KANIT: <test, kaynak, commit veya yok>
+RİSK/ENGEL: <varsa>
+SONRAKİ EYLEM: <Codex, docs-manager veya kullanıcı>
+```
+
+Bu teslim bir Markdown dosyası değildir. Ana ajan içeriği doğrular; kodu uygun dala,
+kalıcı kararı mevcut yaşayan kayda ve dosya mimarisi değişikliğini bu anayasaya işler.
+Bulut sohbeti doğrudan yerel dosya yazdığını veya Codex'i kendiliğinden çalıştırdığını
+varsayamaz. Kullanıcı, görev kartı ya da GitHub bağlantısıyla açıkça devir yapar.
+
 ## 8. Adlandırma ve sürümleme
 
 - Mevcut dosyanın adı korunur; her değişiklikte yeni sürüm dosyası açılmaz.
@@ -201,11 +257,11 @@ Fihrist güncellenemiyorsa zorunlu olmayan yeni Markdown dosyası oluşturulmaz.
 |---|---|---|---|---|---|---|---|---|---|
 | MD-001 | `BASLANGIC-BURADAN.md` | Tarihsel dış Drive kopyası | docs-manager / all-chats | Eski proje giriş kartı | legacy/pre-constitution | archived / external-legacy | not-applicable | legacy-unknown / 2026-08-03 | replaced by MD-002, MD-021 |
 | MD-002 | `README.md` | Git kökü | codex-dev / all-chats | Yazılım başlangıcı | legacy/pre-constitution | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-020 |
-| MD-003 | `AGENTS.md` | Git kökü | docs-manager / all-chats | Bağlayıcı ajan talimatı | legacy/pre-constitution | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-007, MD-008 |
+| MD-003 | `AGENTS.md` | Git kökü | docs-manager / all-chats | Bağlayıcı ajan ve dosya yönlendirme talimatı | legacy/pre-constitution | proposed / branch-only | `docs/chat-file-routing@144e8de` | legacy-unknown / 2026-08-03 | MD-007, MD-008, MD-021 |
 | MD-004 | `TOS-DEC-001__bot-calisma-sistemi-ve-karlilik-disiplini__v0.1.md` | `sources/preview.md` salt okunur yerel kaynak | cloud-planner / cloud-planner,codex-dev | Bot ve kârlılık kararı | legacy/pre-constitution | active / external-sync | `main@983712d` | legacy-unknown / 2026-08-03 | MD-025 |
 | MD-005 | `TOS-DEC-002__bulut-chatgpt-codex-kodlama-is-akisi__v1.0.md` | `docs/decisions/` | docs-manager / cloud-planner,codex-dev | Bulut–Codex akışı | legacy/pre-constitution | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-017, MD-020 |
 | MD-006 | `TOS-DEC-003__sohbet-karar-ve-iletisim-kayit-sistemi__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | Tarihsel iletişim modeli | legacy/pre-constitution | reference / main | `main@0de5589` | legacy-unknown / 2026-08-03 | superseded-in-part by MD-007 |
-| MD-007 | `TOS-DEC-004__merkezi-dosya-yonetim-anayasasi__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | Dosya anayasası ve fihrist | Kullanıcı tarafından merkezi yönetişim istendi | active / main | `main@3d5f0bc` | 2026-08-03 / 2026-08-03 | supersedes MD-006,011,012,013 |
+| MD-007 | `TOS-DEC-004__merkezi-dosya-yonetim-anayasasi__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | Dosya anayasası, klasör yönlendirmesi ve fihrist | Kullanıcı tarafından merkezi yönetişim istendi | proposed / branch-only | `docs/chat-file-routing@144e8de` | 2026-08-03 / 2026-08-03 | supersedes MD-006,011,012,013 |
 | MD-008 | `TOS-CHAT-REGISTRY__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | Rol ve sohbet sicili | Sohbetler arası izlenebilirlik | active / main | `main@0de5589` | 2026-08-03 / 2026-08-03 | MD-003, MD-007 |
 | MD-009 | `TOS-CHATDEC-20260803-001__docs-manager__sohbet-iletisim-log-sistemi.md` | `docs/decisions/chats/` | docs-manager / docs-manager,all-chats | Yaşayan docs-manager kaydı | legacy/pre-constitution | active / main | `main@0de5589` | 2026-08-03 / 2026-08-03 | MD-006, MD-007 |
 | MD-010 | `TOS-CHATDEC-20260803-002__codex-dev__btcusdt-veri-katmani.md` | `docs/decisions/chats/` | codex-dev / codex-dev,cloud-planner | BTCUSDT yaşayan kararı | Bağımsız yazılım bileşeni kararı | active / main | `main@983712d` | 2026-08-03 / 2026-08-03 | MD-015, MD-024 |
@@ -219,7 +275,7 @@ Fihrist güncellenemiyorsa zorunlu olmayan yeni Markdown dosyası oluşturulmaz.
 | MD-018 | `operations.md` | `docs/` | codex-dev / docs-manager,codex-dev | İşletim kuralları | Bağımsız operasyon belgesi | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-002, MD-020 |
 | MD-019 | `talimatla-calisan-drive-codex-koprusu.md` | Tarihsel dış Drive kopyası | docs-manager / cloud-planner,codex-dev | Eski Drive köprüsü açıklaması | legacy/pre-constitution | archived / external-legacy | not-applicable | legacy-unknown / 2026-08-03 | replaced by MD-020 |
 | MD-020 | `automation-runbook.md` | `docs/` | codex-dev / docs-manager,codex-dev | Köprü işletim rehberi | Bağımsız operasyon akışı | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-017, MD-018 |
-| MD-021 | `cloud-control.md` | `docs/` | codex-dev / cloud-planner,codex-dev | Bulut kontrol kartı | Bulut sohbet çalışma kartı | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-001, MD-017 |
+| MD-021 | `cloud-control.md` | `docs/` | docs-manager / all-chats | Bulut sohbet başlangıç talimatı ve Codex görev kartı | Bulut sohbet çalışma kartı | proposed / branch-only | `docs/chat-file-routing@144e8de` | legacy-unknown / 2026-08-03 | MD-001, MD-003, MD-007, MD-017 |
 | MD-022 | `security.md` | `docs/` | codex-dev / all-chats | Güvenlik politikası | Ayrı güvenlik sorumluluğu | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-003, MD-020 |
 | MD-023 | `CURRENT.md` | `docs/status/` | codex-dev / all-chats | Tekil güncel durum | Yaşayan durum kaydı | active / main | `main@3d5f0bc` | 2026-08-03 / 2026-08-03 | MD-024 |
 | MD-024 | `2026-08-03-btcusdt-data-integrity.md` | `docs/reports/` | codex-dev / cloud-planner,codex-dev | BTCUSDT bütünlük kanıtı | Bağımsız doğrulama raporu | active / main | `main@3d5f0bc` | 2026-08-03 / 2026-08-03 | MD-010, MD-015, MD-023 |
@@ -242,6 +298,7 @@ Değişiklik için:
 
 | Tarih | Sürüm | Değişiklik | Onay |
 |---|---:|---|---|
+| 2026-08-03 | 1.4 | Kanonik klasör yönlendirme tablosu ve diğer sohbetlerin rol-temelli dosya teslim sözleşmesi mühürlendi. | Kullanıcı talimatı |
 | 2026-08-03 | 1.3 | Drive depolama ve eşitleme katmanı kaldırıldı; tüm çalışma dosyaları lokal, izlenen kod ve belgelerin uzak yedeği private GitHub olarak mühürlendi. | Kullanıcı talimatı |
 | 2026-08-03 | 1.2 | Kod deposu lokal alana taşındı; Drive seçici belge/iletişim katmanı yapıldı; docs-manager tek-yazıcı, çok-ajan sınırı ve doğrulanabilir fihrist yaşam döngüsü mühürlendi. | Kullanıcı talimatı |
 | 2026-08-03 | 1.1 | Markdown Sicili ve Fihrist Protokolü eklendi; mevcut yönetilen belgeler MD-001–MD-025 olarak kaydedildi. | Kullanıcı talimatı |
