@@ -3,6 +3,11 @@
 This directory is the primary local Git repository for “Trading OS” and is connected
 to the private GitHub repository `Gebetto571/trading-os`.
 
+- Canonical local checkout: `/Users/scm/Projects/trading-os`.
+- Google Drive is only the user-triggered communication, decision, and shared-document
+  layer. Do not place the Git checkout, `.git`, `.env`, databases, build output, or raw
+  working data under the Drive tree.
+
 - Treat every file under `sources/` as read-only reference material.
 - Do not edit, rename, move, or delete synced project files.
 - These files may be replaced the next time a task is created from this ChatGPT project.
@@ -23,6 +28,10 @@ Mottomuz: “Hızlı çalışan, yükü az, pratik ve işlevsel çözümler üre
 - Yeni dosya yalnızca kullanıcı açıkça ayrı dosya isterse veya anayasanın bağımsız yaşam döngüsü, güvenlik, denetim ya da zorunlu kalıcılık istisnalarından biri varsa oluşturulur; Markdown dosyasına `creation_reason` yazılır.
 - Her yeni yönetilen Markdown dosyası, oluşturulduğu aynı işlem içinde TOS-DEC-004 belgesindeki Merkezi Markdown Fihristi’ne kaydedilir; sahibi, kullanan sohbetler, amacı, konumu ve oluşturma gerekçesi yazılır.
 - Dosya taşıma, yeniden adlandırma, arşivleme veya kapsam değişikliğinde yeni fihrist satırı açma; mevcut sicil kaydını güncelle.
+- `AGENTS.md`, TOS-DEC-004, sohbet sicili, merkezi fihrist ve bunların Drive karşılıklarında tek yazar `docs-manager` rolündeki ana ajandır. Alt ajanlar bu dosyalara doğrudan yazmaz; öneri ve kanıtlarını ana ajana iletir.
+- Çok ajanlı işlerde ana ajan görev kimliği, rol, kapsam, yazılabilir yollar, taban Git revizyonu, teslim ölçütü ve risk sınırını açıkça bildirir. Alt ajanlar yalnız ayrık çalışma alanlarında ve kendilerine verilen yollarda çalışır.
+- Alt ajanların kısa durum, ACK, bulgu ve devir mesajları yeni Markdown dosyasına dönüştürülmez. Kalıcı karar gerekiyorsa ana ajan mevcut yaşayan belgeyi günceller.
+- İnsan onayı gerektiren canlı işlem, para transferi, sır paylaşımı, silme veya dış erişimde bütün alt ajanlar durur; yalnız ana ajan kullanıcıdan onay ister ve onayı belirli görev/eylem kapsamıyla sınırlar.
 - Dosya konumu belirsizse yeni dosya açma; `docs-manager` sohbetine yönlendir.
 - Açık kullanıcı talimatı olmadan periyodik dosya veya aktarım kontrolü yapma.
 - Sohbet kimliklerinde `docs/decisions/system/TOS-CHAT-REGISTRY__v1.0.md` kullan.
