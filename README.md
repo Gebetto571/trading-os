@@ -2,11 +2,13 @@
 
 Trading OS; araştırma, risk, yürütme ve yapay zekâ destekli denetim bileşenlerini sade ve izlenebilir bir çalışma düzeninde birleştirir.
 
-Bu depo iki kalıcı katmanlıdır:
+Trading OS üç sade katmanda çalışır:
 
 - **Yerel çalışma alanı:** `/Users/scm/Projects/trading-os`; kod, testler, SQLite
   kayıtları ve hızlı geliştirme burada tutulur.
 - **GitHub:** Kodun ve kalıcı teknik belgelerin sürüm geçmişi ve uzak yedeği.
+- **Google Drive:** Yapay zekâ hafızası ve kullanıcı denetimli görev–sonuç
+  koordinasyonu. Drive bir kod deposu veya canlı uygulama kaynağı değildir.
 
 Public GitHub deposu: <https://github.com/Gebetto571/trading-os>
 
@@ -27,9 +29,11 @@ alındıktan sonra şu komutla yerel kayda işlenebilir:
 python3 -m trading_os_bridge ingest var/inbox
 ```
 
-Sohbetler arası aktarım kendiliğinden çalışmaz. Kullanıcı görev metnini proje
-kaynağına ekler veya GitHub issue/commit/PR bağlantısını Codex'e verir. Yerel
-işleme için şu komutlar kullanılır:
+Sohbetler arası aktarım kendiliğinden çalışmaz. ChatGPT, kullanıcının talimatıyla
+JSON görev zarfını Drive `01_CHATGPT_GELEN` klasörüne bırakabilir; kullanıcı Codex'e
+kontrol emri verir. Sonuç aynı kimlikle `02_CODEX_GELEN` klasörüne döner. Yerel
+köprü Drive'ı taramaz; zarf kullanıcı denetiminde yerel gelen kutusuna alındıktan
+sonra şu komutlar kullanılır:
 
 ```bash
 python3 -m trading_os_bridge claim --worker codex-dev
@@ -55,7 +59,9 @@ Geçersiz ve bütünlüğü bozuk zarflar çalıştırılmaz, karantinaya alın�
 
 `sources/` klasörü ChatGPT projesinden eşlenen salt okunur kaynaktır; değiştirilmez.
 
-Kod, belgeler ve çalışma dosyaları lokaldir; sürüm ve uzak yedek GitHub'dadır.
+Kod ve Git-kanonik teknik belgeler lokaldir; sürüm ve uzak kaynak GitHub'dadır.
+Drive'daki yaşayan AI hafızasının kanonik sahibi Drive'dır. Katmanlar arasında
+bağımsız düzenlenen iki yaşayan kopya oluşturulmaz; TOS-DEC-004 bölüm 7 uygulanır.
 Yeni Markdown varsayılan olarak açılmaz; TOS-DEC-004 istisnası ve merkezi fihrist
 kaydı birlikte gerekir.
 

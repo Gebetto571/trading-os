@@ -47,13 +47,45 @@ gönderilmez. Mevcut sohbetin ilişkili ana belgeleri
 okunur. Kullanıcı rolü açıkça değiştirmedikçe yalnız yeni görev verilir; ortak dosya
 talimatı rol değişikliği sayılmaz.
 
+## Sade çalışma modeli
+
+Her görev, mevcut görev metninde aşağıdaki üç düzeyden biriyle sınıflandırılır;
+ayrı form, dosya veya kayıt tablosu açılmaz:
+
+- **FAST:** Tek veya birkaç mevcut belgede geri alınabilir yerel düzenleme. Varsayılan
+  danışman sayısı `0`dır; yalnız hedef dosyalar ve ilgili bağlayıcı kural okunur,
+  hedefli doğrulama yapılır.
+- **STANDARD:** Birden fazla kanonik belgeyi veya sohbet alanını etkileyen düzenleme.
+  Kısa etki haritası ve çelişki kontrolü yapılır. Gerçek ihtiyaç varsa tek görevlik,
+  salt okunur danışman kullanılabilir.
+- **STRICT:** Ürün veya test kodu, API/veri sözleşmesi, şema, migration,
+  konfigürasyon, deployment, çalışan servis, güvenlik, Risk Guardian, execution ya
+  da canlı işlem etkisi. Belge sohbeti uygulama yapmaz; Chief Engineer için görev
+  kartı hazırlar ve kullanıcı devrini bekler.
+
+Yerel düzenleme hattı mevcut belgeleri, karar kayıtlarını, sohbet–belge ilişkilerini,
+görev kartlarını, dosya sahipliği ve yaşam döngüsü kayıtlarını doğrudan düzenleyebilir.
+Kaynak veya test koduna; konfigürasyon, şema, migration ve deployment dosyalarına;
+çalışan süreçlere veya canlı işlem yetkisine dokunamaz. Chief Engineer sürekli bir
+belge kapısı değil, yalnız yazılım uygulama hattıdır.
+
+Bağlam minimum tutulur: `AGENTS.md`, ilgili bağlayıcı karar veya sözleşme, hedef
+dosyalar ve mevcut diff. İhtiyaç kanıtlanmadan proje tarihi veya ilgisiz sohbetler
+taranmaz. Önce hedefli doğrulama yapılır; tam test yalnız ortak sözleşme, risk,
+şema/migration, çapraz alan veya sürüm etkisinde Chief Engineer tarafından çalıştırılır.
+
+Geçici danışmanlar dosya değiştiremez, bağlayıcı karar veremez ve raporları için
+ayrı dosya açılmaz. Ana sohbet yalnız kabul ettiği bulguları sonuç özetine alır;
+FAST işlerde danışman kullanılmaz ve aynı konu için kalıcı danışman rolü kurulmaz.
+
 ## Bulut sohbeti başladığında
 
 1. Bu kartı ve `docs/communication-protocol.md` belgesini oku.
-2. Codex'e yeni iş göndermek için amaç, kapsam, kabul kriterleri ve kaynakları
-   içeren görev kartını hazırla.
-3. Kullanıcıdan kartı ChatGPT proje kaynağına eklemesini veya GitHub issue/commit/PR
-   bağlantısıyla Codex'e devretmesini iste.
+2. İşi FAST, STANDARD veya STRICT olarak sınıflandır. FAST ve STANDARD belge işini
+   yetki sınırında doğrudan yürüt; STRICT işte Chief Engineer görev kartı hazırla.
+3. STRICT işte veya yerel dosyaya erişim yoksa kullanıcıdan kartı ChatGPT proje
+   kaynağına eklemesini ya da GitHub issue/commit/PR bağlantısıyla Chief Engineer'a
+   devretmesini iste.
 4. Bağlayıcı kararı önce ilgili sohbetin mevcut yaşayan kaydına işle; yeni
    Markdown ancak TOS-DEC-004 istisnasıyla açılabilir ve aynı işlemde merkezi
    fihriste kaydedilir.
@@ -61,30 +93,36 @@ talimatı rol değişikliği sayılmaz.
 
 ## Yetki sınırı
 
-Proje kaynağındaki sohbet mesajları kodu kendiliğinden değiştirmez. Codex görevi
-ancak kullanıcının açık talimatından sonra alır, yerel Git dalında uygular, test
-eder ve sonucu commit/PR bağlantısı ile bildirir. Kalıcı teknik gerçek yerel Git
-ve GitHub'daki sürümlü dosyalardır.
+Proje kaynağındaki sohbet mesajları kodu kendiliğinden değiştirmez. Chief Engineer
+görevi ancak kullanıcının açık talimatından sonra alır, yerel Git alanında uygular
+ve doğrular. Commit, push, PR veya merge ayrıca açıkça yetkilendirilmedikçe yapılmaz.
+Kalıcı teknik gerçek yerel Git ve GitHub'daki sürümlü dosyalardır.
+
+Drive'ın AI hafızası, görev/sonuç koordinasyonu ve katmanlar arası tek kanonik
+sahip kuralları TOS-DEC-004 bölüm 7'de bağlayıcıdır. Eski Drive kod deposu yolları
+geçersizdir; güncel `Trading OS` Drive hafıza alanı bu yasak kapsamında değildir.
 
 Public kod deposu: <https://github.com/Gebetto571/trading-os>
 
 ## Devir yönleri
 
-- ChatGPT → Codex: kullanıcı tarafından eklenen proje kaynağı veya GitHub görev bağlantısı
-- Codex → ChatGPT: kullanıcı aracılığıyla verilen commit/PR ve sonuç özeti
-- Kalıcı kod ve belge: `/Users/scm/Projects/trading-os`
+- ChatGPT → Chief Engineer: Drive `01_CHATGPT_GELEN` içindeki onaylı JSON görev zarfı
+- Chief Engineer → ChatGPT: Drive `02_CODEX_GELEN` içindeki korelasyonlu sonuç zarfı
+- Alternatif teknik referans: GitHub issue/commit/PR bağlantısı
+- AI hafızası ve koordinasyon: güncel Drive `Trading OS` alanı
+- Kalıcı kod ve Git-kanonik teknik belge: `/Users/scm/Projects/trading-os`
 - Sürüm ve uzak yedek: public GitHub `Gebetto571/trading-os`
 
 ## Codex'i çalıştırma
 
-Codex hiçbir kaynağı kendiliğinden taramaz. Kullanıcı “Trading OS proje kaynağındaki
-görevi incele” veya ilgili GitHub bağlantısını içeren eşdeğer talimatı verdiğinde
-görevi alır, işler ve sonucu kullanıcıya teslim eder.
+Codex hiçbir kaynağı kendiliğinden taramaz. Kullanıcı “Kodlama emrini işleme koy”,
+“Trading OS gelen kutusunu kontrol et” veya ilgili GitHub bağlantısını içeren
+eşdeğer talimatı verdiğinde yalnız ilgili Drive görev zarfını ya da teknik referansı
+kontrol eder. Periyodik kontrol yapılmaz.
 
-Yeni `.md` açma, yeniden adlandırma, taşıma ve arşivleme kararlarında
-TOS-DEC-004 uygulanır. Rutin görev,
-yanıt, durum ve teyitler Markdown değildir; JSON zarfı ve yerel veritabanıyla
-izlenir.
+Yeni `.md` açma, yeniden adlandırma, taşıma ve arşivleme kararlarında TOS-DEC-004
+uygulanır. Mevcut köprü kullanılıyorsa görev, yanıt, durum ve teyitler yeni Markdown
+yerine korelasyonlu JSON zarfla taşınır; sonuç geri okunmadan görev tamamlanmaz.
 
 ## Codex'e verilecek görev kartı
 
@@ -94,16 +132,22 @@ Bulut sohbetinin çıktısı aşağıdaki kısa kartla Codex'e devredilir:
 Trading OS için aşağıdaki görevi uygula.
 
 Gönderen rol: <role_key>
+Değişiklik modu: <FAST | STANDARD | STRICT>
 Amaç: <tek cümle>
 Kapsam: <dahil olanlar>
 Kapsam dışı: <dokunulmayacaklar>
-Kaynaklar: <proje kaynağı veya GitHub bağlantıları>
-Önerilen mevcut dosyalar: <yollar>
-Kod hedefi: <yol veya docs-manager kararı gerekli>
+Kaynaklar: <Drive görev/araştırma kimliği veya GitHub bağlantıları>
+Hedef yollar / aktif yazar: <yollar ve tek yazar>
+Karar etkisi: <yok | mevcut TOS-DEC kimliği | docs-manager incelemesi>
+Ajan politikası: <0 | gerekçeli geçici salt-okunur danışman>
+Bağlam bütçesi: <okunacak asgari belgeler ve diff>
 Kabul ölçütleri: <ölçülebilir maddeler>
+Test kapsamı: <hedefli kontroller; gerekiyorsa tam test gerekçesi>
 Risk/onay sınırı: <silme, dış erişim, canlı işlem vb.>
+Durma koşulu: <çakışma, yetki veya kapsam aşımı>
+Commit/push/merge yetkisi: <yok | açık kapsam>
 
 TOS-DEC-004 dosya mimarisini uygula. Gereksiz yeni Markdown oluşturma.
-Önce mevcut durumu doğrula; güvenli kapsamda uygula, test et ve sonucu commit/PR
-ile bildir. Periyodik kontrol başlatma.
+Önce mevcut durumu doğrula; güvenli kapsamda uygula ve hedefli kanıtı bildir.
+Periyodik kontrol başlatma.
 ```
