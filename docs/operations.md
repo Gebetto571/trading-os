@@ -15,7 +15,8 @@
 
 ## Git politikası
 
-- Bu Codex proje aynasında uygulama `.git` yolunu koruduğu için Git metadata'sı `.local-git/` altında tutulur. Normal Git komutlarının yerine `bin/tos-git` kullanılır.
+- Ana yerel repository standart `.git` metadata'sını kullanır ve özel GitHub deposuna
+  `origin` adıyla bağlıdır. Normal, etkileşimsiz Git komutları kullanılır.
 - Ana dal: `main`.
 - İş dalları: `agent/<kısa-konu>` veya `feature/<kısa-konu>`.
 - Küçük, tek amaçlı kayıtlar yapılır.
@@ -25,8 +26,8 @@
 Örnek:
 
 ```bash
-bin/tos-git status
-bin/tos-git log --oneline
+git status
+git log --oneline
 ```
 
 ## GitHub politikası
