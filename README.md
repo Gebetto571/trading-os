@@ -77,3 +77,8 @@ cargo run --release -p trading-os-market-data --bin market-data-import -- run \
 
 Ayrıntılı mimari ve işletim bilgisi:
 [BTCUSDT veri katmanı](docs/architecture/market-data.md).
+
+Tarihsel kurulumdan sonra yeni kapanmış mumları artımlı almak için
+`market-data-import sync` kullanılır. Yerel macOS görevi bunu 15 dakikada bir
+çalıştırır; kesinti sonrası PostgreSQL'deki son kanonik dakikadan devam eder ve
+her çalışmada `data/health/btcusdt/` altında kısa sağlık kaydı bırakır.

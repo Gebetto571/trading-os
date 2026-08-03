@@ -4,6 +4,7 @@ pub mod candle;
 pub mod cli;
 pub mod db;
 pub mod download;
+pub mod health;
 pub mod parquet_export;
 pub mod parquet_verify;
 pub mod pipeline;

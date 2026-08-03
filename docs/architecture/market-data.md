@@ -46,10 +46,22 @@ data/parquet/
 ## CLI
 
 Alt komutlar: `plan`, `download`, `import`, `validate`, `repair`, `aggregate`,
-`export-parquet`, `verify-parquet`, `compare-binance`, `run`, `status`. `run` aşamaları güvenli
+`export-parquet`, `verify-parquet`, `compare-binance`, `run`, `sync`, `status`. `run` aşamaları güvenli
 sırada çalıştırır. `--download-concurrency` 1-16 arasında ayarlanabilir ve
 varsayılanı 4'tür. `compare-binance`, UTC gün sınırları içindeki kanonik 15m, 1h,
 4h ve 1d mumları Binance'ın yayımladığı mumlarla birebir karşılaştırır.
 `verify-parquet`, seçilen aylardaki beş zaman diliminin Parquet şemasını, bölüm
 envanterini ve ihraç edilen 17 PostgreSQL alanını 4.096 satırlık akışlarla birebir
 karşılaştırır; JSON raporu üretir ve herhangi bir farkta başarısız olur.
+
+`sync`, PostgreSQL'deki son kanonik 1m mumdan devam eder ve başlangıçta son
+kapanmış dakikayı sabitler. Aynı sembolde iki çalışmayı session advisory lock ile
+engeller; yarım kalan çalışmayı `interrupted` olarak kaydeder. Son yedi gündeki
+boşlukları tarar. Yedi günden uzun gecikmede önce doğrulanmış Binance arşivlerini,
+ardından kalan ve en fazla yedi günlük boşluklar için REST'i kullanır. REST sonucu
+kanonik tabloya yazılmadan doğrulanır. Yalnız dokunulan aylar yeniden aggregate
+edilir, atomik Parquet yayımlanır ve `verify-parquet` kapısından geçirilir.
+
+Her çağrı stdout ve `data/health/btcusdt/` altında kısa bir sağlık kaydı üretir.
+Çalışma kanıtı `market_data_sync_runs` tablosundadır; veri watermark'ının doğruluk
+kaynağı ayrı bir sayaç değil, kanonik tablodaki en büyük 1m `open_time` değeridir.

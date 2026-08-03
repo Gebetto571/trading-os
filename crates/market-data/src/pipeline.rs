@@ -5,16 +5,18 @@ use crate::{
     cli::{Cli, Command},
     db,
     download::{cached_checksum, extract_single_csv, verify_cached, DownloadError, Downloader},
+    health::{self, HealthReport, HealthStatus},
     parquet_export, parquet_verify,
     rest::BinanceRest,
     validation::{validate, ValidationReport},
 };
 use anyhow::{bail, Context};
-use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Utc};
 use sqlx::PgPool;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
+    time::Instant,
 };
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -70,6 +72,9 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<()> {
         println!("{}", serde_json::to_string_pretty(&p)?);
         return Ok(());
     }
+    if matches!(cli.command, Command::Sync) {
+        return sync_with_health(cli, start, end).await;
+    }
     let pool = if matches!(cli.command, Command::Download) {
         None
     } else {
@@ -88,7 +93,8 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<()> {
             ensure_valid(pool.as_ref().unwrap(), &cli.symbol, start, end).await?;
         }
         Command::Repair => {
-            repair(pool.as_ref().unwrap(), &cli.symbol, start, end).await?;
+            let mut counts = db::SyncRunCounts::default();
+            repair(pool.as_ref().unwrap(), &cli.symbol, start, end, &mut counts).await?;
         }
         Command::Aggregate => {
             aggregate(pool.as_ref().unwrap(), &cli.symbol, start, end).await?;
@@ -125,15 +131,356 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<()> {
             let p = pool.as_ref().unwrap();
             download(cli, start, end, Some(p)).await?;
             import_cached(cli, start, end, p).await?;
-            repair(p, &cli.symbol, start, end).await?;
+            let mut counts = db::SyncRunCounts::default();
+            repair(p, &cli.symbol, start, end, &mut counts).await?;
             let report = ensure_valid(p, &cli.symbol, start, end).await?;
             info!(rows = report.rows, "canonical 1m data validated");
             aggregate(p, &cli.symbol, start, end).await?;
             export_all(p, cli, start, end).await?;
         }
+        Command::Sync => unreachable!(),
         Command::Plan => unreachable!(),
     }
     Ok(())
+}
+
+#[derive(Debug)]
+struct SyncOutcome {
+    status: &'static str,
+    range_start: Option<DateTime<Utc>>,
+    range_end: DateTime<Utc>,
+    last_open_before: Option<DateTime<Utc>>,
+    last_open_after: Option<DateTime<Utc>>,
+    counts: db::SyncRunCounts,
+}
+
+#[derive(Debug)]
+struct SyncFailure {
+    error: anyhow::Error,
+    range_start: Option<DateTime<Utc>>,
+    range_end: Option<DateTime<Utc>>,
+    last_open_before: Option<DateTime<Utc>>,
+    last_open_after: Option<DateTime<Utc>>,
+    counts: db::SyncRunCounts,
+}
+
+impl From<anyhow::Error> for SyncFailure {
+    fn from(error: anyhow::Error) -> Self {
+        Self {
+            error,
+            range_start: None,
+            range_end: None,
+            last_open_before: None,
+            last_open_after: None,
+            counts: Default::default(),
+        }
+    }
+}
+
+impl SyncFailure {
+    fn with_error(mut self, error: anyhow::Error) -> Self {
+        self.error = error;
+        self
+    }
+}
+
+impl std::fmt::Display for SyncFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(formatter)
+    }
+}
+
+fn sync_work_start(
+    end: DateTime<Utc>,
+    latest: DateTime<Utc>,
+    recent_gaps: &[(DateTime<Utc>, DateTime<Utc>)],
+) -> Option<DateTime<Utc>> {
+    let tail_start = latest + Duration::minutes(1);
+    match (
+        recent_gaps.first().map(|gap| gap.0),
+        (tail_start < end).then_some(tail_start),
+    ) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
+}
+
+fn archive_catchup_end(tail_start: DateTime<Utc>, end: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    let archive_end = end - Duration::days(7);
+    (tail_start < archive_end).then_some(archive_end)
+}
+
+fn ensure_rest_repairable(gaps: &[(DateTime<Utc>, DateTime<Utc>)]) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        gaps.iter()
+            .all(|(start, end)| { *start < *end && *end - *start <= Duration::days(7) }),
+        "an unresolved gap exceeds the seven-day REST repair limit; restore archives first"
+    );
+    Ok(())
+}
+
+fn validate_repair_batch(
+    rows: &[crate::candle::Candle],
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    let report = validate(rows, start, end);
+    anyhow::ensure!(
+        report.is_valid(),
+        "REST repair failed validation: {}",
+        serde_json::to_string_pretty(&report)?
+    );
+    Ok(())
+}
+
+async fn sync_locked(
+    pool: &PgPool,
+    cli: &Cli,
+    requested_start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Result<SyncOutcome, SyncFailure> {
+    db::interrupt_stale_sync_runs(pool, &cli.symbol).await?;
+    let latest = db::latest_open_time(pool, &cli.symbol, "1m").await?;
+    let Some(latest) = latest else {
+        let run_id = db::begin_sync_run(pool, &cli.symbol, None, end).await?;
+        let error = "canonical 1m database is empty; run the historical bootstrap first";
+        db::finish_sync_run(
+            pool,
+            run_id,
+            "failed",
+            "bootstrap_required",
+            Default::default(),
+            Some(error),
+        )
+        .await?;
+        return Err(anyhow::anyhow!(error).into());
+    };
+
+    let recent_start = requested_start.max(end - Duration::days(7));
+    let recent = db::validate_range(pool, &cli.symbol, "1m", recent_start, end).await?;
+    if !recent.errors.is_empty() || !recent.duplicates.is_empty() {
+        return Err(anyhow::anyhow!("recent canonical range contains invalid rows").into());
+    }
+    let tail_start = latest + Duration::minutes(1);
+    let work_start = sync_work_start(end, latest, &recent.gaps);
+    let Some(work_start) = work_start else {
+        let run_id = db::begin_sync_run(pool, &cli.symbol, None, end).await?;
+        db::finish_sync_run(pool, run_id, "noop", "complete", Default::default(), None).await?;
+        return Ok(SyncOutcome {
+            status: "noop",
+            range_start: None,
+            range_end: end,
+            last_open_before: Some(latest),
+            last_open_after: Some(latest),
+            counts: Default::default(),
+        });
+    };
+
+    let run_id = db::begin_sync_run(pool, &cli.symbol, Some(work_start), end).await?;
+    let mut counts = db::SyncRunCounts::default();
+    let result: anyhow::Result<SyncOutcome> = async {
+        if let Some(archive_end) = archive_catchup_end(tail_start, end) {
+            db::update_sync_stage(pool, run_id, "archive_catchup").await?;
+            download(cli, tail_start, archive_end, Some(pool)).await?;
+            counts.rows_inserted += import_cached(cli, tail_start, archive_end, pool).await?;
+        }
+
+        db::update_sync_stage(pool, run_id, "rest_repair").await?;
+        repair(pool, &cli.symbol, work_start, end, &mut counts).await?;
+        db::reconcile_pending_daily_with_rest(pool, &cli.symbol, requested_start, end).await?;
+        db::reconcile_pending_monthly_with_fallback(pool, &cli.symbol, requested_start, end)
+            .await?;
+
+        db::update_sync_stage(pool, run_id, "validate").await?;
+        ensure_valid(pool, &cli.symbol, work_start, end).await?;
+        db::update_sync_stage(pool, run_id, "aggregate").await?;
+        aggregate(pool, &cli.symbol, work_start, end).await?;
+        db::update_sync_stage(pool, run_id, "export_parquet").await?;
+        export_all(pool, cli, work_start, end).await?;
+        db::update_sync_stage(pool, run_id, "verify_parquet").await?;
+        let verification =
+            parquet_verify::verify(pool, &cli.parquet_root, &cli.symbol, work_start, end).await;
+        anyhow::ensure!(
+            verification.passed,
+            "post-sync PostgreSQL-Parquet verification failed: {}",
+            serde_json::to_string(&verification)?
+        );
+        counts.partitions_verified = verification.partitions_checked;
+        let final_report = db::validate_range(pool, &cli.symbol, "1m", work_start, end).await?;
+        counts.gaps_remaining = final_report.gaps.len() as u64;
+        anyhow::ensure!(final_report.is_valid(), "post-sync gaps remain");
+        let last_after = db::latest_open_time(pool, &cli.symbol, "1m").await?;
+        Ok(SyncOutcome {
+            status: "succeeded",
+            range_start: Some(work_start),
+            range_end: end,
+            last_open_before: Some(latest),
+            last_open_after: last_after,
+            counts,
+        })
+    }
+    .await;
+
+    match result {
+        Ok(outcome) => {
+            db::finish_sync_run(pool, run_id, "succeeded", "complete", counts, None).await?;
+            Ok(outcome)
+        }
+        Err(error) => {
+            let message = format!("{error:#}");
+            let _ =
+                db::finish_sync_run(pool, run_id, "failed", "failed", counts, Some(&message)).await;
+            let last_after = db::latest_open_time(pool, &cli.symbol, "1m")
+                .await
+                .unwrap_or(Some(latest));
+            Err(SyncFailure {
+                error,
+                range_start: Some(work_start),
+                range_end: Some(end),
+                last_open_before: Some(latest),
+                last_open_after: last_after,
+                counts,
+            })
+        }
+    }
+}
+
+async fn sync_with_health(
+    cli: &Cli,
+    requested_start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    let started = Instant::now();
+    let database_url = match cli.database_url() {
+        Ok(url) => url,
+        Err(error) => {
+            let mut report = HealthReport::new(HealthStatus::Failed, &cli.symbol)
+                .with_error("database configuration unavailable");
+            report.range_end = Some(end);
+            report.duration_ms = started.elapsed().as_millis() as u64;
+            health::publish(&cli.health_root, &report)?;
+            return Err(error);
+        }
+    };
+    let pool = match db::connect(&database_url).await {
+        Ok(pool) => pool,
+        Err(error) => {
+            let mut report = HealthReport::new(HealthStatus::Failed, &cli.symbol)
+                .with_error("database unavailable");
+            report.range_end = Some(end);
+            report.duration_ms = started.elapsed().as_millis() as u64;
+            health::publish(&cli.health_root, &report)?;
+            return Err(error);
+        }
+    };
+    if let Err(error) = db::migrate(&pool).await {
+        let mut report = HealthReport::new(HealthStatus::Failed, &cli.symbol)
+            .with_database_reachable(true)
+            .with_error("database migration unavailable");
+        report.range_end = Some(end);
+        report.duration_ms = started.elapsed().as_millis() as u64;
+        health::publish(&cli.health_root, &report)?;
+        return Err(error);
+    }
+
+    let lock = match db::try_sync_lock(
+        &pool,
+        &format!("market-data-sync:binance:spot:{}:1m", cli.symbol),
+    )
+    .await
+    {
+        Ok(lock) => lock,
+        Err(error) => {
+            let mut report = HealthReport::new(HealthStatus::Failed, &cli.symbol)
+                .with_database_reachable(false)
+                .with_error("database unavailable while acquiring sync lock");
+            report.range_end = Some(end);
+            report.duration_ms = started.elapsed().as_millis() as u64;
+            health::publish(&cli.health_root, &report)?;
+            return Err(error);
+        }
+    };
+    let Some(lock) = lock else {
+        if let Err(error) = db::record_skipped_sync_run(&pool, &cli.symbol, end).await {
+            let mut report = HealthReport::new(HealthStatus::Failed, &cli.symbol)
+                .with_database_reachable(false)
+                .with_error("database unavailable while recording skipped sync");
+            report.range_end = Some(end);
+            report.duration_ms = started.elapsed().as_millis() as u64;
+            health::publish(&cli.health_root, &report)?;
+            return Err(error);
+        }
+        let mut report =
+            HealthReport::new(HealthStatus::Skipped, &cli.symbol).with_database_reachable(true);
+        report.range_end = Some(end);
+        report.duration_ms = started.elapsed().as_millis() as u64;
+        health::publish(&cli.health_root, &report)?;
+        return Ok(());
+    };
+
+    let result = sync_locked(&pool, cli, requested_start, end).await;
+    let release = lock.release().await;
+    let result = match (result, release) {
+        (Ok(outcome), Ok(())) => Ok(outcome),
+        (Err(failure), Ok(())) => Err(failure),
+        (Ok(_), Err(error)) => Err(SyncFailure::from(
+            error.context("release sync advisory lock"),
+        )),
+        (Err(failure), Err(release_error)) => {
+            let error = anyhow::anyhow!(
+                "{:#}; also failed to release sync advisory lock: {release_error:#}",
+                failure.error
+            );
+            Err(failure.with_error(error))
+        }
+    };
+
+    match result {
+        Ok(outcome) => {
+            let status = if outcome.status == "noop" {
+                HealthStatus::Noop
+            } else {
+                HealthStatus::Succeeded
+            };
+            let mut report = HealthReport::new(status, &cli.symbol)
+                .with_database_reachable(true)
+                .with_last_open_before(outcome.last_open_before)
+                .with_last_open_after(outcome.last_open_after);
+            report.range_start = outcome.range_start;
+            report.range_end = Some(outcome.range_end);
+            report.rows_fetched = outcome.counts.rows_fetched;
+            report.rows_inserted = outcome.counts.rows_inserted;
+            report.rows_repaired = outcome.counts.rows_repaired;
+            report.gaps_remaining = outcome.counts.gaps_remaining;
+            report.partitions_verified = outcome.counts.partitions_verified;
+            report.duration_ms = started.elapsed().as_millis() as u64;
+            health::publish(&cli.health_root, &report)?;
+            Ok(())
+        }
+        Err(failure) => {
+            let mut report = HealthReport::new(HealthStatus::Failed, &cli.symbol)
+                .with_database_reachable(true)
+                .with_last_open_before(failure.last_open_before)
+                .with_last_open_after(failure.last_open_after)
+                .with_error("market-data synchronization failed");
+            report.range_start = failure.range_start;
+            report.range_end = failure.range_end.or(Some(end));
+            report.rows_fetched = failure.counts.rows_fetched;
+            report.rows_inserted = failure.counts.rows_inserted;
+            report.rows_repaired = failure.counts.rows_repaired;
+            report.gaps_remaining = failure.counts.gaps_remaining;
+            report.partitions_verified = failure.counts.partitions_verified;
+            report.duration_ms = started.elapsed().as_millis() as u64;
+            let publish = health::publish(&cli.health_root, &report);
+            if let Err(publish_error) = publish {
+                return Err(failure.error.context(format!(
+                    "also failed to publish health report: {publish_error:#}"
+                )));
+            }
+            Err(failure.error)
+        }
+    }
 }
 
 async fn download(
@@ -368,21 +715,21 @@ async fn repair(
     symbol: &str,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
-) -> anyhow::Result<u64> {
+    counts: &mut db::SyncRunCounts,
+) -> anyhow::Result<()> {
     let report = db::validate_range(pool, symbol, "1m", start, end).await?;
+    counts.gaps_remaining = report.gaps.len() as u64;
+    ensure_rest_repairable(&report.gaps)?;
     let rest = BinanceRest::new()?;
-    let mut repaired = 0;
     for (gap_start, gap_end) in report.gaps {
         info!(%gap_start,%gap_end,"repairing gap with REST");
         let rows = rest.fetch(symbol, gap_start, gap_end).await?;
-        let repair_report = validate(&rows, gap_start, gap_end);
-        if !repair_report.is_valid() {
-            bail!(
-                "REST repair failed validation: {}",
-                serde_json::to_string_pretty(&repair_report)?
-            );
-        }
-        repaired += db::insert_candles(pool, &rows).await?;
+        counts.rows_fetched += rows.len() as u64;
+        validate_repair_batch(&rows, gap_start, gap_end)?;
+        let inserted = db::insert_candles(pool, &rows).await?;
+        counts.rows_inserted += inserted;
+        counts.rows_repaired += inserted;
+        counts.gaps_remaining = counts.gaps_remaining.saturating_sub(1);
     }
     let final_report = db::validate_range(pool, symbol, "1m", start, end).await?;
     anyhow::ensure!(
@@ -396,8 +743,8 @@ async fn repair(
         daily_reconciled,
         monthly_reconciled, "fallback manifest entries reconciled"
     );
-    info!(repaired, "REST repair complete");
-    Ok(repaired)
+    info!(repaired = counts.rows_repaired, "REST repair complete");
+    Ok(())
 }
 
 async fn compare_aggregates_with_binance(
@@ -486,9 +833,6 @@ async fn export_all(
         for interval in ["1m", "15m", "1h", "4h", "1d"] {
             let mut rows =
                 db::load_candles(pool, &cli.symbol, interval, month_start, month_end).await?;
-            if rows.is_empty() {
-                continue;
-            }
             rows.sort_by_key(|c| c.open_time);
             let year = month_start.year();
             let month = month_start.month();
@@ -510,6 +854,7 @@ async fn export_all(
 mod tests {
     use super::*;
     use crate::validation::tests::candle;
+    use clap::Parser;
     use rust_decimal::Decimal;
     #[test]
     fn daily_is_rest_fallback_candidate() {
@@ -539,5 +884,120 @@ mod tests {
         let mut changed = published;
         changed.close = Decimal::new(11, 1);
         assert!(compare_market_values("15m", &[canonical], &[changed]).is_err());
+    }
+
+    #[test]
+    fn sync_window_uses_tail_or_earliest_recent_gap() {
+        let end: DateTime<Utc> = "2026-08-03T12:00:00Z".parse().unwrap();
+        let latest = end - Duration::minutes(10);
+        assert_eq!(
+            sync_work_start(end, latest, &[]),
+            Some(end - Duration::minutes(9))
+        );
+        let gap = (end - Duration::hours(2), end - Duration::hours(1));
+        assert_eq!(sync_work_start(end, latest, &[gap]), Some(gap.0));
+        assert_eq!(sync_work_start(end, end - Duration::minutes(1), &[]), None);
+    }
+
+    #[test]
+    fn sync_archive_threshold_is_strictly_seven_days() {
+        let end: DateTime<Utc> = "2026-08-03T12:00:00Z".parse().unwrap();
+        assert_eq!(
+            archive_catchup_end(end - Duration::days(7) - Duration::minutes(1), end),
+            Some(end - Duration::days(7))
+        );
+        assert_eq!(archive_catchup_end(end - Duration::days(7), end), None);
+    }
+
+    #[test]
+    fn unresolved_archive_gap_over_seven_days_fails_closed() {
+        let start: DateTime<Utc> = "2026-07-01T00:00:00Z".parse().unwrap();
+        assert!(ensure_rest_repairable(&[(start, start + Duration::days(7))]).is_ok());
+        assert!(ensure_rest_repairable(&[(
+            start,
+            start + Duration::days(7) + Duration::minutes(1)
+        )])
+        .is_err());
+    }
+
+    #[test]
+    fn rest_rows_are_rejected_before_insert_when_incomplete() {
+        let start: DateTime<Utc> = "2026-08-01T00:00:00Z".parse().unwrap();
+        let rows = vec![candle("2026-08-01T00:00:00Z")];
+        assert!(validate_repair_batch(&rows, start, start + Duration::minutes(2)).is_err());
+    }
+
+    #[test]
+    fn touched_months_cover_both_sides_of_month_boundary() {
+        let start: DateTime<Utc> = "2026-07-31T23:59:00Z".parse().unwrap();
+        let end: DateTime<Utc> = "2026-08-01T00:01:00Z".parse().unwrap();
+        let months = touched_months(start, end);
+        assert_eq!(months.len(), 2);
+        assert_eq!(
+            months[0].0,
+            "2026-07-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap()
+        );
+        assert_eq!(
+            months[1].0,
+            "2026-08-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap()
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn sync_rejects_empty_database_without_network_bootstrap(pool: PgPool) {
+        let cli = Cli::parse_from([
+            "market-data-import",
+            "sync",
+            "--start",
+            "2024-01-01T00:00:00Z",
+            "--end",
+            "2024-01-01T00:01:00Z",
+        ]);
+        let error = sync_locked(
+            &pool,
+            &cli,
+            "2024-01-01T00:00:00Z".parse().unwrap(),
+            "2024-01-01T00:01:00Z".parse().unwrap(),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("historical bootstrap"));
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM market_data_sync_runs ORDER BY id DESC LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "failed");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn sync_noop_records_terminal_run(pool: PgPool) {
+        let row = candle("2024-01-01T00:00:00Z");
+        db::insert_candles(&pool, std::slice::from_ref(&row))
+            .await
+            .unwrap();
+        let cli = Cli::parse_from([
+            "market-data-import",
+            "sync",
+            "--start",
+            "2024-01-01T00:00:00Z",
+            "--end",
+            "2024-01-01T00:01:00Z",
+        ]);
+        let outcome = sync_locked(
+            &pool,
+            &cli,
+            "2024-01-01T00:00:00Z".parse().unwrap(),
+            "2024-01-01T00:01:00Z".parse().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.status, "noop");
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM market_data_sync_runs ORDER BY id DESC LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "noop");
     }
 }
