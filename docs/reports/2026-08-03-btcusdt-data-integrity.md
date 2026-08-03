@@ -46,20 +46,18 @@ Yerel PostgreSQL 16 servisi üzerinde iki aşamalı kapı çalıştırıldı:
 
 - `cargo fmt --all -- --check`: geçti
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: geçti
-- `cargo test --workspace --all-features`: 20 geçti, 0 başarısız
+- `cargo test --workspace --all-targets --all-features`: 24 geçti, 0 başarısız
+- Gerçek PostgreSQL farklı içerik çelişmesi: doğru biçimde reddedildi
+- Manifest tam yaşam döngüsü ve fallback yaşam döngüsü: geçti
+- 2024-01-01 Binance karşılaştırması: 15m `96`, 1h `24`, 4h `6`, 1d `1` mum
+  birebir eşleşti
+- Migration 1-3: başarılı
+- Manifest sonucu: `validated` 97, `fallback_complete` 2, `failed` 0
 
-## Kalan kapsam
+## Tamamlanan önceki açıklar
 
-Varsayılan üç yıllık PostgreSQL/Parquet aktarımı tamamlandı. REST fallback gerçek
-günlük arşiv gecikmesinde çalıştı. Farklı içerik çatışması gerçek PostgreSQL servisine
-bilinçli olarak enjekte edilmedi; üst zaman dilimleri Binance'ın yayımladığı örneklerle
-ayrıca karşılaştırılmadı.
-
-## Bilinen açıklar
-
-- PostgreSQL tekrar çalıştırma idempotency'si gerçek servis üzerinde sınandı; farklı
-  içerik çatışmasının gerçek servis entegrasyon testi hâlâ eksik.
-- Manifestin `planned/downloaded/validated` geçişleri ve tam resume semantiği eksik.
-- Başarılı fallback sonrasında bulunamayan üst arşiv manifestte `failed` kalıyor.
-- İndirme güvenli fakat sıralı; CLI eşzamanlılık ayarı henüz yok.
-- Üst zaman dilimleri gerçek Binance örnekleriyle karşılaştırılmadı.
+Farklı içerik çakışması gerçek PostgreSQL servisinde sınanmış ve reddedilmiştir.
+Manifestin bütün normal, yeniden deneme, hata ve fallback geçişleri uygulanmıştır.
+Başarılı fallback kayıtları uzlaştırılmıştır. İndirme eşzamanlılığı 1-16 arasında
+ayarlanabilir hale getirilmiştir. Üst zaman dilimleri gerçek Binance örneğiyle
+karşılaştırılmıştır.

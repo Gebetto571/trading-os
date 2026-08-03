@@ -24,9 +24,9 @@ rust_decimal = { version = "1.36", features = ["db-postgres", "serde-with-str"] 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "rust_decimal", "migrate"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "rust_decimal", "migrate", "macros"] }
 thiserror = "2.0"
-tokio = { version = "1.42", features = ["macros", "rt-multi-thread", "fs", "time", "signal"] }
+tokio = { version = "1.42", features = ["macros", "rt-multi-thread", "fs", "time", "signal", "sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
