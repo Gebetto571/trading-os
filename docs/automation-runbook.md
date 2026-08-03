@@ -2,28 +2,32 @@
 
 ## Çalışma biçimi
 
-Codex yalnız kullanıcı “Trading OS proje kaynağındaki görevi incele” dediğinde
-veya açık bir GitHub görev/commit/PR bağlantısı verdiğinde işi kontrol eder. Arka
-planda zamanlanmış veya periyodik kontrol yapılmaz.
+Codex yalnız kullanıcı “Trading OS gelen kutusunu kontrol et” dediğinde veya açık
+bir GitHub görev/commit/PR bağlantısı verdiğinde işi kontrol eder. Drive'ın güncel
+`Trading OS` alanı AI hafızası ve görev–sonuç koordinasyonudur; kod deposu değildir.
+Arka planda zamanlanmış, periyodik veya tüm Drive'ı tarayan kontrol yapılmaz.
 
-1. Kullanıcı görev kartını ChatGPT proje kaynağına ekler ya da GitHub bağlantısıyla
-   Codex'e devreder.
-2. Yerel JSON zarfı kullanılıyorsa şema sürümü, UUID, zaman, gönderici, alıcı, tür, dosya yolu ve varsa artefakt
+1. ChatGPT, kullanıcı talimatıyla JSON görev zarfını Drive `01_CHATGPT_GELEN`
+   klasörüne yazar ve geri okuyarak doğrular.
+2. Kullanıcı Codex'e kontrol emri verir; Drive bağlayıcısı veya elle alınan zarf
+   yerel `var/inbox/` alanına konur. Yerel köprü Drive'ı kendiliğinden taramaz.
+3. Yerel JSON zarfında şema sürümü, UUID, zaman, gönderici, alıcı, tür, dosya yolu ve varsa artefakt
    SHA-256 değerleri doğrulanır. Geçersiz veya aynı UUID ile farklı içerik taşıyan
    zarf işlenmez; `quarantine` alanına ve denetim kaydına alınır.
-3. Aynı UUID ve aynı özet daha önce kaydedilmişse güvenli tekrar sayılır; görev
+4. Aynı UUID ve aynı özet daha önce kaydedilmişse güvenli tekrar sayılır; görev
    ikinci kez çalıştırılmaz.
-4. Geçerli yeni mesaj `received` olur. Bir uygulayıcı `claim` ile süreli sahiplik
+5. Geçerli yeni mesaj `received` olur. Bir uygulayıcı `claim` ile süreli sahiplik
    almadan mesaj `processing` durumuna geçemez.
-5. Sahiplik; ajan kimliği, alınma ve sona erme zamanı, deneme sayısı ile tutulur.
+6. Sahiplik; ajan kimliği, alınma ve sona erme zamanı, deneme sayısı ile tutulur.
    Süresi dolmuş veya yarım kalmış sahiplik ancak kullanıcı talimatlı `recover`
    işlemiyle yeniden kullanılabilir hâle gelir.
-6. Güvenli ve yetkili görev gerçekleştirilir; kod değişikliği varsa test edilir
+7. Güvenli ve yetkili görev gerçekleştirilir; kod değişikliği varsa test edilir
    ve proje Git politikasına göre kaydedilir.
    Son durum yalnız claim sahibi ve süresi geçmemiş lease ile yazılabilir.
-7. Sonuç aynı `correlation_id` ile yerel kayda yazılır; commit/PR bağlantısı ve
-   doğrulama özeti kullanıcıya teslim edilir.
-8. Doğrulanıp SQLite'a alınan özgün zarf tekrar çalıştırılmaması için yerel ham
+8. Sonuç aynı `correlation_id` ile Drive `02_CODEX_GELEN` klasörüne yazılır ve
+   geri okunur; commit/PR bağlantısı ve doğrulama özeti kullanıcıya teslim edilir.
+   Sonuç geri okunmadan Drive görevi tamamlanmış sayılmaz.
+9. Doğrulanıp SQLite'a alınan özgün zarf tekrar çalıştırılmaması için yerel ham
    arşive taşınır; işin `received`, `processing`, `completed` veya `failed` durumu
    veritabanında izlenir. Hatalı zarf karantinada kanıt olarak korunur.
 
@@ -48,7 +52,7 @@ Bu durumlarda Codex görevi uygulamak yerine `status` türünde `approval_requir
 
 ## Çalıştırma
 
-- Ana talimat: `Trading OS proje kaynağındaki görevi incele.`
+- Ana talimat: `Trading OS gelen kutusunu kontrol et.`
 - Alternatif talimat: `Şu GitHub görevini/PR'ını incele: <bağlantı>.`
 - İstenirse tek mesaj UUID'si belirtilerek yalnız o mesaj işlenebilir.
 - Yeni mesaj yoksa Codex bunu kısa biçimde bildirir.

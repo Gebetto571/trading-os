@@ -2,9 +2,9 @@
 id: TOS-DEC-004
 title: Merkezi Dosya Yönetim Anayasası
 status: sealed
-version: 1.6
+version: 1.8
 date: 2026-08-03
-last_updated: 2026-08-03
+last_updated: 2026-08-04
 authority: project-constitution
 scope:
   - all-chats
@@ -81,27 +81,116 @@ Yeni Markdown dosyasında kısa bir `creation_reason` alanı bulunur ve yukarıd
 - Kullanılacağı doğrulanmamış şablonlar
 - Yalnızca sohbetler arası aktarım yapıldığını göstermek amacıyla açılan olay dosyaları
 
-## 7. Konumlandırma
+### 6.1. TOS-DEC karar eşiği ve asgari içerik
 
-Kod, belgeler ve çalışma verileri yerelde tutulur. Kodla birlikte sürümlenecek
-teknik içerik yerel Git deposunda hazırlanır ve public GitHub deposuna gönderilir:
+TOS-DEC yalnız önemli ve kalıcı bir mimari karar; sistem sınırı, güvenlik modeli,
+veri sözleşmesi veya geri dönüşü maliyetli teknik yön değişikliği için açılır ya da
+güncellenir. Küçük kod düzenlemesi, günlük görev, geçici fikir ve kolay geri alınabilir
+tercih için TOS-DEC kullanılmaz. Ayrı ADR modülü, ADR klasörü veya ikinci karar
+kimliği kurulmaz.
 
-`/Users/scm/Projects/trading-os`
+Önemli bir TOS-DEC yeniden ele alındığında, yalnız o kayıtta şu alanlar tamamlanır:
 
-Google Drive proje depolama veya eşitleme katmanı değildir. Eski Drive kopyaları
-tarihsel dış kopyadır; güncel belge, görev veya karar kaynağı olarak kullanılmaz.
-Bulut sohbetten Codex'e devir, kullanıcının proje kaynağına eklediği görev veya
-GitHub issue/commit/PR bağlantısı üzerinden ve yalnız açık kullanıcı talimatıyla olur.
+- bağlam ve gerçek problem;
+- karar sürücüleri;
+- korunacak sistem sınırları;
+- değerlendirilen seçenekler;
+- karar ve gerekçesi;
+- olumlu ve olumsuz sonuçlar;
+- etkilenen bileşenler;
+- doğrulama kanıtı;
+- yeniden değerlendirme koşulu;
+- yerine geçtiği veya geçersiz kıldığı karar.
+
+Eski kararlar sırf bu biçime uydurulmak için topluca yeniden yazılmaz.
+
+## 7. Kanonik katman ve Google Drive kullanım politikası
+
+Trading OS üç ayrı katman kullanır:
+
+- **Google Drive:** Yapay zekâ proje hafızası ve kullanıcı denetimli koordinasyon
+  alanıdır. Araştırma notları, Ar-Ge çıktıları, karar adayları, sohbet görev/yetki
+  brifleri, görev ve sonuç zarfları, çalışma günlükleri, değerlendirme raporları,
+  insan tarafından okunacak Markdown; makinece işlenecek JSON; PDF, görsel, veri
+  seti, dış kaynak ve tarihsel kayıtlar burada kanonik olabilir.
+- **Yerel Git:** `/Users/scm/Projects/trading-os` altındaki kaynak/test kodunun,
+  şema ve migration'ların, API/veri sözleşmelerinin, konfigürasyonun, deployment
+  ve üretim altyapısının, `AGENTS.md` dosyasının, kodla atomik değişmesi gereken
+  teknik belgelerin ve bağlayıcı TOS-DEC kararlarının tek kanonik kaynağıdır.
+- **GitHub:** `https://github.com/Gebetto571/trading-os` adresindeki public uzak
+  sürüm kaynağıdır; issue, PR ve teknik değişiklik geçmişini taşır. Drive hafızası
+  için ikinci bağımsız yazım merkezi veya otomatik çift yönlü eşitleme katmanı değildir.
+
+Google Drive bir Git deposu, kod çalışma dizini veya canlı uygulama kaynağı değildir.
+Eski Drive kod deposu, `Drive'ım` ve `07_KOD/trading-os` yolları geçersizdir. Bu
+yasak, kimliği `1HlL02y2O8OeONMG1OGBkD7sTLConT7ZN` olan güncel `Trading OS`
+yapay zekâ hafızası ve koordinasyon alanını kapsamaz.
+
+### 7.0.1. Tek kanonik sahip ve katmanlar arası kopya
+
+Her yaşayan belge veya kayıt tek bir kanonik konuma sahiptir. Aynı içerik başka
+katmanda gerekiyorsa yalnız şu ilişkilerden biri kullanılır:
+
+1. **Referans:** Diğer katmanda yalnız kimlik, yol veya bağlantı tutulur.
+2. **Salt okunur yayın kopyası:** Kanonik kaynak, belge kimliği, kaynak sürümü veya
+   Git commit'i, yayın tarihi ve “bu kopya bağımsız olarak düzenlenmez” hükmünü taşır.
+3. **Tarih damgalı çıktı:** Belirli bir andaki rapor veya arşivdir; yaşayan belge değildir.
+
+Drive ve Git'te bağımsız düzenlenen iki yaşayan kopya oluşturulmaz. Aynı adlı bir
+Git belgesinin Drive kopyası, fihristte açıkça Drive-kanonik gösterilmedikçe salt
+okunur yayın kopyasıdır. Bunun için yeni veritabanı, senkronizasyon servisi veya
+geniş metadata sistemi kurulmaz.
+
+### 7.0.2. Kararların Drive'dan TOS-DEC'e geçişi
+
+Drive'daki araştırma veya karar adayı yalnız yapay zekâ çalışmasını düzenliyorsa
+Drive'da kanonik kalabilir. Kod, teknik mimari veya bağlayıcı sistem davranışı
+değişecekse kullanıcı onayından sonra mevcut TOS-DEC düzenine aktarılır. TOS-DEC
+oluştuğunda Drive kaynağı silinmez; `yerine geçilmiş` veya eşdeğer mevcut duruma
+alınır ve ilgili TOS-DEC kimliğine referans verir. Ayrı ADR sistemi, ikinci karar
+kimliği veya yeni karar klasörü açılmaz.
+
+### 7.0.3. Doğrulanmış Drive klasör görevleri
+
+Güncel `Trading OS` Drive alanındaki mevcut klasörler korunur:
+
+- `00_KONTROL_MERKEZI`: Başlangıç kartı, klasör kimlikleri ve sohbet–hat eşlemesi.
+- `01_CHATGPT_GELEN`: ChatGPT'den Chief Engineer'a onaylı JSON görev zarfları.
+- `02_CODEX_GELEN`: Chief Engineer'dan ChatGPT'ye korelasyonlu sonuç, durum ve hata zarfları.
+- `03_KARARLAR`: Sistem kuralları, sohbet kararları/adayları, aktarım kaydı,
+  bağlı belgeler ve kendi arşivi; her belgenin kanonik sahibi ayrıca belirlenir.
+- `04_TEKNIK_TASARIM`: AI tasarım çalışmaları, Drive-kanonik çalışma protokolleri
+  ve Git-kanonik teknik belgelerin salt okunur yayın kopyaları.
+- `05_RAPORLAR`: İnsan tarafından okunacak değerlendirme ve çalışma raporları.
+- `06_PAYLASILAN_CIKTILAR`: Paylaşım veya teslim amacıyla hazırlanmış çıktılar.
+- `90_ARSIV`: Yerine geçmiş veya tarihsel üst düzey Drive kayıtları.
+
+Klasör adı tek başına belgeyi kanonik yapmaz. Mevcut klasör yeniden adlandırılmaz,
+aynı görev için paralel klasör açılmaz ve toplu taşıma yapılmaz. Yeni klasör ancak
+mevcut klasörlerin işi karşılamadığı kanıtlanırsa ayrıca önerilir.
+
+### 7.0.4. Görev–sonuç ve hafif doğrulama
+
+Araştırma, tasarım ve AI hafızası Drive'da oluşabilir. Kodlama gerektiren onaylı iş
+mevcut JSON zarf düzeniyle `01_CHATGPT_GELEN` klasörüne; Chief Engineer sonucu aynı
+`correlation_id` ile `02_CODEX_GELEN` klasörüne yazılır. Sonuç geri okunmadan görev
+tamamlanmış sayılmaz. Commit, push, PR, merge, deployment ve canlı işlem ayrıca
+açık kullanıcı yetkisi gerektirir.
+
+Periyodik tarama veya sürekli senkronizasyon kurulmaz. Kontrol yalnız belge oluşturma,
+değiştirme, yayınlama, görev devri, sonuç geri alma, yerine geçirme veya arşivleme
+olayında ve yalnız ilgili kayıtlar için yapılır. Her olayda kanonik sahip, kopya türü,
+kaynak kimliği/sürümü, görev/karar durumu ve eski yol veya çelişkili sahiplik denetlenir.
 
 | İçerik | Birincil konum |
 |---|---|
-| Kaynak kodu ve test | Git deposu |
-| Veritabanı şeması/geçişi | Git deposu `schemas/` ve `migrations/` |
-| Teknik ana belgeler | Git deposu `docs/` |
-| Merkezi sistem kuralları | Git deposu `AGENTS.md` ve `docs/decisions/system/` |
-| Sohbetin yaşayan kaydı | Git deposu `docs/decisions/chats/` |
-| Büyük ek/başvuru belgesi | Yerel, Git dışı çalışma alanı; gerekiyorsa yalnız özeti Git'te |
-| Yerel sırlar, çalışma DB'si ve ham veri | Lokal; GitHub ve dış eşitleme dışında |
+| Kaynak kodu, test, şema, migration, sözleşme, konfigürasyon ve deployment | Yerel Git deposu |
+| `AGENTS.md`, bağlayıcı TOS-DEC ve kodla atomik teknik belge | Yerel Git deposu `docs/` |
+| AI hafızası, araştırma, Ar-Ge, karar adayı ve çalışma günlüğü | Google Drive `Trading OS` |
+| Görev/sonuç zarfı ve AI koordinasyon kartı | Google Drive `Trading OS` |
+| Git-kanonik belgenin Drive görünümü | Salt okunur yayın kopyası veya referans |
+| Büyük dış kaynak, PDF, görsel ve veri seti | Drive veya güvenli yerel alan; kanonik sahibi açıkça belirtilir |
+| Yerel sırlar, çalışma DB'si ve ham canlı veri | Lokal; GitHub ve Drive dışında |
 
 ### 7.1. Kanonik klasör yönlendirme tablosu
 
@@ -190,9 +279,10 @@ satırları günceller. Aynı ilişkiyi göstermek için yeni Markdown dosyası 
 
 ## 9. Sürüm ve yedekleme kuralı
 
-- Yerel Git deposu izlenen kod ve belgelerin tek çalışma kaynağıdır.
+- Yerel Git deposu yazılımın ve Git-kanonik teknik belgelerin tek çalışma kaynağıdır.
 - Yerel Git deposu ile public GitHub arasındaki teknik geçmişi Git yönetir.
-- Drive eşitlemesi yapılmaz; eski Drive kopyaları güncel kaynağın yerine geçmez.
+- Drive hafızası otomatik çift yönlü eşitlenmez; eski Drive kod deposu güncel
+  yazılım kaynağının yerine geçmez.
 - Çakışmada en yeni dosya körlemesine seçilmez; değişiklikler karşılaştırılıp birleştirilir.
 - Sırlar, parolalar, API anahtarları ve kişisel veriler Markdown belgelerine veya Git'e yazılmaz.
 
@@ -208,6 +298,12 @@ satırları günceller. Aynı ilişkiyi göstermek için yeni Markdown dosyası 
 - `AGENTS.md`, bu anayasa, sohbet sicili ve merkezi fihristte tek yazardır. Çok
   ajanlı çalışmada ana ajan `docs-manager` rolünü
   üstlenir ve bu değişiklikleri seri uygular.
+- Mevcut belge, klasör ilişkisi, karar kaydı, sohbet sicili, görev kartı, sahiplik
+  ve yaşam döngüsü gibi kodsuz düzenlemeleri Chief Engineer çağırmadan yapar.
+- Kaynak/test kodu, sözleşme, şema, migration, konfigürasyon, deployment, çalışan
+  servis veya canlı işlem etkisi doğarsa uygulamayı durdurur ve Chief Engineer için
+  `docs/cloud-control.md` görev kartını hazırlar. Chief Engineer sürekli belge onay
+  kapısı değildir.
 
 Diğer sohbetler dosya konumundan emin değilse yeni dosya açmak yerine `docs-manager` için mevcut sohbet kaydına yönlendirme notu bırakır veya kullanıcıdan dosya yöneticisine talimat vermesini ister.
 
@@ -276,30 +372,30 @@ Fihrist güncellenemiyorsa zorunlu olmayan yeni Markdown dosyası oluşturulmaz.
 
 | Sicil | Belge | Kanonik konum | Sahip / kullananlar | Amaç / kapsam | Oluşturma gerekçesi | Yaşam / erişim | Git kanıtı | Tarih | İlişki |
 |---|---|---|---|---|---|---|---|---|---|
-| MD-001 | `BASLANGIC-BURADAN.md` | Tarihsel dış Drive kopyası | docs-manager / all-chats | Eski proje giriş kartı | legacy/pre-constitution | archived / external-legacy | not-applicable | legacy-unknown / 2026-08-03 | replaced by MD-002, MD-021 |
+| MD-001 | `BASLANGIC-BURADAN.md` | Drive `00_KONTROL_MERKEZI/` | docs-manager / all-chats | Drive yapay zekâ hafızası ve koordinasyon başlangıç kartı | Mevcut Drive kontrol belgesi | active / external-sync | not-applicable | legacy-unknown / 2026-08-04 | MD-007, MD-017, MD-021 |
 | MD-002 | `README.md` | Git kökü | codex-dev / all-chats | Yazılım başlangıcı | legacy/pre-constitution | active / main | `main@3e20207` | legacy-unknown / 2026-08-03 | MD-020 |
 | MD-003 | `AGENTS.md` | Git kökü | docs-manager / all-chats | Bağlayıcı ajan, ilk rol ve belge yönlendirme talimatı | legacy/pre-constitution | active / main | `main@3e20207` | legacy-unknown / 2026-08-03 | MD-007, MD-008, MD-021 |
-| MD-004 | `TOS-DEC-001__bot-calisma-sistemi-ve-karlilik-disiplini__v0.1.md` | `sources/preview.md` salt okunur yerel kaynak | cloud-planner / cloud-planner,codex-dev | Bot ve kârlılık kararı | legacy/pre-constitution | active / external-sync | `main@983712d` | legacy-unknown / 2026-08-03 | MD-025 |
+| MD-004 | `TOS-DEC-001__bot-calisma-sistemi-ve-karlilik-disiplini__v0.1.md` | `sources/preview.md` salt okunur yerel kaynak | external-sync / cloud-planner,codex-dev | Bot ve kârlılık kararı | legacy/pre-constitution | active / external-sync | `main@983712d` | legacy-unknown / 2026-08-03 | MD-025 |
 | MD-005 | `TOS-DEC-002__bulut-chatgpt-codex-kodlama-is-akisi__v1.0.md` | `docs/decisions/` | docs-manager / cloud-planner,codex-dev | Bulut–Codex akışı | legacy/pre-constitution | active / main | `main@3e20207` | legacy-unknown / 2026-08-03 | MD-017, MD-020 |
 | MD-006 | `TOS-DEC-003__sohbet-karar-ve-iletisim-kayit-sistemi__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | Tarihsel iletişim modeli | legacy/pre-constitution | reference / main | `main@3e20207` | legacy-unknown / 2026-08-03 | superseded-in-part by MD-007 |
 | MD-007 | `TOS-DEC-004__merkezi-dosya-yonetim-anayasasi__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | Dosya anayasası, klasör ve sohbet–belge yönlendirmesi ile fihrist | Kullanıcı tarafından merkezi yönetişim istendi | active / main | `main@3e20207` | 2026-08-03 / 2026-08-03 | supersedes MD-006,011,012,013 |
 | MD-008 | `TOS-CHAT-REGISTRY__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | İlk rol kaynağı, sohbet sicili ve ana belge ilişki matrisi | Sohbetler arası izlenebilirlik | active / main | `main@e963359` | 2026-08-03 / 2026-08-03 | MD-003, MD-007, MD-021 |
-| MD-009 | `TOS-CHATDEC-20260803-001__docs-manager__sohbet-iletisim-log-sistemi.md` | `docs/decisions/chats/` | docs-manager / docs-manager,all-chats | Yaşayan docs-manager kaydı | legacy/pre-constitution | active / main | `main@0de5589` | 2026-08-03 / 2026-08-03 | MD-006, MD-007 |
+| MD-009 | `TOS-CHATDEC-20260803-001__docs-manager__sohbet-iletisim-log-sistemi.md` | `docs/decisions/chats/` | docs-manager / docs-manager,all-chats | Tarihsel docs-manager kararı | legacy/pre-constitution | reference / main | `main@0de5589` | 2026-08-03 / 2026-08-03 | superseded-in-part by MD-007 |
 | MD-010 | `TOS-CHATDEC-20260803-002__codex-dev__btcusdt-veri-katmani.md` | `docs/decisions/chats/` | codex-dev / codex-dev,cloud-planner | BTCUSDT yaşayan kararı | Bağımsız yazılım bileşeni kararı | active / main | `main@983712d` | 2026-08-03 / 2026-08-03 | MD-015, MD-024 |
 | MD-011 | `TOS-XFER-20260803-001__docs-manager__all-chats__policy.md` | `docs/communication-log/` | docs-manager / all-chats | Tarihsel ilk aktarım | legacy/pre-constitution | reference / main | `main@0de5589` | 2026-08-03 / 2026-08-03 | superseded by MD-007 |
 | MD-012 | `TOS-TPL-001__sohbet-karari-sablonu.md` | `docs/decisions/templates/` | docs-manager / all-chats | Tarihsel karar şablonu | legacy/pre-constitution | reference / main | `main@0de5589` | 2026-08-03 / 2026-08-03 | MD-006, MD-007 |
 | MD-013 | `TOS-TPL-002__sohbetler-arasi-aktarim-sablonu.md` | `docs/decisions/templates/` | docs-manager / all-chats | Tarihsel aktarım şablonu | legacy/pre-constitution | reference / main | `main@0de5589` | 2026-08-03 / 2026-08-03 | MD-006, MD-007 |
-| MD-014 | `architecture.md` | `docs/` | codex-dev / cloud-planner,codex-dev | Sistem mimarisi | Bağımsız teknik ana belge | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-015, MD-016 |
-| MD-015 | `market-data.md` | `docs/architecture/` | codex-dev / cloud-planner,codex-dev | Piyasa verisi mimarisi | Bağımsız yazılım bileşeni | active / main | `main@3d5f0bc` | 2026-08-03 / 2026-08-03 | MD-010, MD-024 |
+| MD-014 | `architecture.md` | `docs/` | docs-manager / cloud-planner,codex-dev | Sistem mimarisi | Bağımsız teknik ana belge | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-015, MD-016 |
+| MD-015 | `market-data.md` | `docs/architecture/` | docs-manager / cloud-planner,codex-dev | Piyasa verisi mimarisi | Bağımsız yazılım bileşeni | active / main | `main@3d5f0bc` | 2026-08-03 / 2026-08-03 | MD-010, MD-024 |
 | MD-016 | `database.md` | `docs/` | codex-dev / cloud-planner,codex-dev | Veritabanı tasarımı | Bağımsız teknik ana belge | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-014, MD-020 |
 | MD-017 | `communication-protocol.md` | `docs/` | docs-manager / all-chats | Bulut–Codex kullanıcı devir protokolü | Bağımsız iletişim sözleşmesi | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-005, MD-020 |
-| MD-018 | `operations.md` | `docs/` | codex-dev / docs-manager,codex-dev | İşletim kuralları | Bağımsız operasyon belgesi | active / main | `main@3e20207` | legacy-unknown / 2026-08-03 | MD-002, MD-020 |
-| MD-019 | `talimatla-calisan-drive-codex-koprusu.md` | Tarihsel dış Drive kopyası | docs-manager / cloud-planner,codex-dev | Eski Drive köprüsü açıklaması | legacy/pre-constitution | archived / external-legacy | not-applicable | legacy-unknown / 2026-08-03 | replaced by MD-020 |
-| MD-020 | `automation-runbook.md` | `docs/` | codex-dev / docs-manager,codex-dev | Köprü işletim rehberi | Bağımsız operasyon akışı | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-017, MD-018 |
+| MD-018 | `operations.md` | `docs/` | docs-manager / docs-manager,codex-dev | İşletim kuralları | Bağımsız operasyon belgesi | active / main | `main@3e20207` | legacy-unknown / 2026-08-03 | MD-002, MD-020 |
+| MD-019 | `talimatla-calisan-drive-codex-koprusu.md` | Drive `04_TEKNIK_TASARIM/` | docs-manager / cloud-planner,codex-dev | Kullanıcı talimatlı Drive–Chief Engineer görev/sonuç akışı | Mevcut Drive çalışma protokolü | active / external-sync | not-applicable | legacy-unknown / 2026-08-04 | MD-017, MD-020 |
+| MD-020 | `automation-runbook.md` | `docs/` | docs-manager / docs-manager,codex-dev | Köprü işletim rehberi | Bağımsız operasyon akışı | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-017, MD-018 |
 | MD-021 | `cloud-control.md` | `docs/` | docs-manager / all-chats | Yeni sohbet başlangıç talimatı ve Codex görev kartı | Bulut sohbet çalışma kartı | active / main | `main@3e20207` | legacy-unknown / 2026-08-03 | MD-001, MD-003, MD-007, MD-008, MD-017 |
-| MD-022 | `security.md` | `docs/` | codex-dev / all-chats | Güvenlik politikası | Ayrı güvenlik sorumluluğu | active / main | `main@3e20207` | legacy-unknown / 2026-08-03 | MD-003, MD-020 |
-| MD-023 | `CURRENT.md` | `docs/status/` | codex-dev / all-chats | Tekil güncel durum | Yaşayan durum kaydı | active / main | `main@3e20207` | 2026-08-03 / 2026-08-03 | MD-024 |
-| MD-024 | `2026-08-03-btcusdt-data-integrity.md` | `docs/reports/` | codex-dev / cloud-planner,codex-dev | BTCUSDT bütünlük kanıtı | Bağımsız doğrulama raporu | active / main | `main@3d5f0bc` | 2026-08-03 / 2026-08-03 | MD-010, MD-015, MD-023 |
+| MD-022 | `security.md` | `docs/` | docs-manager / all-chats | Güvenlik politikası | Ayrı güvenlik sorumluluğu | active / main | `main@3e20207` | legacy-unknown / 2026-08-03 | MD-003, MD-020 |
+| MD-023 | `CURRENT.md` | `docs/status/` | docs-manager / all-chats | Tekil güncel durum | Yaşayan durum kaydı | active / main | `main@3e20207` | 2026-08-03 / 2026-08-03 | MD-024 |
+| MD-024 | `2026-08-03-btcusdt-data-integrity.md` | `docs/reports/` | docs-manager / cloud-planner,codex-dev | BTCUSDT bütünlük kanıtı | Bağımsız doğrulama raporu | active / main | `main@3d5f0bc` | 2026-08-03 / 2026-08-03 | MD-010, MD-015, MD-023 |
 | MD-025 | `sources/` Markdown grubu | `sources/` | external-sync / all-chats | Salt okunur kaynak aynası | Dış sistem eşitlemesi | reference / external-sync | `main@983712d` | legacy-unknown / 2026-08-03 | MD-004 |
 
 Yeni sicil kimliği, fihristteki en yüksek doğrulanmış sayının bir fazlasıdır; metinde sabit bir “sıradaki numara” tutulmaz. Bir satırın fihriste eklenmesi belgenin içeriğinin doğruluğunu onaylamaz; yalnız varlığını, amacını, yaşam döngüsünü ve sorumluluğunu kayıt altına alır.
@@ -319,6 +415,8 @@ Değişiklik için:
 
 | Tarih | Sürüm | Değişiklik | Onay |
 |---|---:|---|---|
+| 2026-08-04 | 1.8 | Google Drive güncel yapay zekâ hafızası ve koordinasyon katmanı olarak yeniden tanımlandı; eski Drive kod deposu yasağı korunarak tek kanonik sahip, yayın kopyası, görev–sonuç ve olay bazlı doğrulama kuralları mühürlendi. | Kullanıcı talimatı ve Drive klasör doğrulaması |
+| 2026-08-03 | 1.7 | Yerel belge hattı ile Chief Engineer yazılım hattı ayrıldı; TOS-DEC karar eşiği ve kanıtlanmış fihrist sahiplikleri sade tek-yazar düzenine alındı. | Kullanıcı talimatı |
 | 2026-08-03 | 1.6 | Kanonik yerel depo yolu yeniden doğrulandı; eski Drive yolları geçersiz, GitHub deposunun güncel görünürlüğü public olarak mühürlendi. | Kullanıcı talimatı ve canlı doğrulama |
 | 2026-08-03 | 1.5 | Mevcut sohbetlerin ilk mesajındaki rolün esas olduğu ve sohbet–ana belge ilişkilerinin merkezi sicilde tutulacağı mühürlendi. | Kullanıcı talimatı |
 | 2026-08-03 | 1.4 | Kanonik klasör yönlendirme tablosu ve diğer sohbetlerin rol-temelli dosya teslim sözleşmesi mühürlendi. | Kullanıcı talimatı |

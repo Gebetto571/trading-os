@@ -4,10 +4,17 @@ This directory is the primary local Git repository for “Trading OS” and is c
 to the public GitHub repository `Gebetto571/trading-os`.
 
 - Canonical local checkout: `/Users/scm/Projects/trading-os`.
-- Project code, documents, databases, build output, and raw working data stay local.
-  Google Drive is not a project storage or synchronization layer. GitHub is the public,
-  versioned remote backup for tracked code and documents; secrets and market data are not
-  pushed there.
+- Project code, tests, schemas, configuration, deployment material, local databases,
+  build output, raw working data, and code-atomic technical documents stay local.
+- Google Drive is not a project storage or synchronization layer for the local Git
+  repository. The current Google Drive `Trading OS` area is the AI memory and
+  coordination layer; it is not a Git repository, code working directory, or live
+  application source.
+  Former Drive code-repository paths, including `Drive'ım` and `07_KOD/trading-os`,
+  remain obsolete. Canonical ownership and publication-copy rules are defined in
+  `docs/decisions/system/TOS-DEC-004__merkezi-dosya-yonetim-anayasasi__v1.0.md`.
+- GitHub is the public, versioned remote for the local Git repository; secrets and
+  market data are not pushed there.
 
 - Treat every file under `sources/` as read-only reference material.
 - Do not edit, rename, move, or delete synced project files.

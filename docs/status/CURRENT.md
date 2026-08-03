@@ -1,11 +1,12 @@
-# Güncel durum — 2026-08-03
+# Güncel durum — 2026-08-04
 
 ## Yerleşim ve yönetişim
 
 Ana yerel Git deposunun `/Users/scm/Projects/trading-os` konumunda olduğu ve eski
-Drive çalışma kopyasının yerelde bulunmadığı 2026-08-03 tarihinde doğrulanmıştır.
-Çalışma dosyaları tamamen lokaldir; izlenen kod ve belgelerin sürüm ve uzak yedeği
-GitHub'dadır.
+Drive kod çalışma kopyasının yerelde bulunmadığı doğrulanmıştır. Yazılım ve
+Git-kanonik teknik belgeler yereldir; sürüm ve uzak kaynak public GitHub'dadır.
+Güncel Drive `Trading OS` alanı TOS-DEC-004 bölüm 7 uyarınca AI hafızası ve
+kullanıcı denetimli görev–sonuç koordinasyon katmanıdır; kod deposu değildir.
 
 TOS-DEC-003, ilk iletişim modeli için tarihsel başvuru durumundadır; ayrı Markdown
 olay dosyası üretme hükümleri TOS-DEC-004 tarafından geçersiz kılınmıştır. Mevcut
@@ -13,13 +14,14 @@ yaşayan kayıt ve merkezi fihrist önceliklidir.
 
 ## Köprü durumu
 
-Köprü kullanıcı talimatlı proje kaynağı/GitHub devri; yerel `claim`, `recover`,
+Köprü kullanıcı talimatlı Drive görev zarfı/GitHub teknik referansı devri; yerel `claim`, `recover`,
 tam zarf doğrulaması, içerik özeti, süreli sahiplik, karantina ve karar sürümlemesi
 ile uygulanmıştır. Migration yükseltmesi, tekrar/çatışma, durum geçişi, eşzamanlı
 claim/terminal yarışları, atomik migration rollback'i, özel dosya izinleri,
 arşivleme hatası, karantina denetimi ve inbox dışına kaçış senaryolarını kapsayan
 toplam 36 Python testi geçmiştir.
-Drive adaptörü ve eşitleme komutları kaldırılmıştır.
+Sürekli Drive adaptörü ve eşitleme komutları yoktur; Drive kontrolü yalnız açık
+kullanıcı talimatıyla mevcut `01_CHATGPT_GELEN` ve `02_CODEX_GELEN` klasörlerinde yapılır.
 Gerçek bir `cloud-planner -> codex-dev` test mesajı gelen kutusu, arşiv, claim,
 süreli sahiplik ve `completed` durumundan geçirilerek yerel köprü uçtan uca
 doğrulanmıştır.
@@ -53,6 +55,5 @@ eşzamanlılığı yapılandırılabilir yapılmış, başarılı fallback kayı
 Fiziksel olarak ayrı yedek hedefi henüz bağlı değildir. Doğrulanmış yerel yedek bu
 hedef bağlanana kadar korunur; Drive veri yedeği olarak kullanılmaz.
 
-GitHub deposu kullanıcı onayıyla public yapılmıştır. PR birleşince çalışma dallarını
-otomatik silme ayarı açıktır. `main` koruması doğrudan birleştirmeyi engeller; zorunlu
-kalite kapısı geçmeden PR birleştirilemez.
+GitHub deposu public durumdadır ve PR birleşince çalışma dallarını otomatik silme
+ayarı açıktır. Kalite kapısı PR iş akışı ve işletim disipliniyle uygulanır.
