@@ -29,6 +29,19 @@ Yerel PostgreSQL 16 servisi üzerinde iki aşamalı kapı çalıştırıldı:
 - İkinci çalıştırmalarda beş Parquet dosyasının SHA-256 değerleri değişmedi
 - Artakalan `.part` Parquet dosyası: `0`
 
+## Üç yıllık aktarım sonucu
+
+- Aralık: `[2023-08-03T00:00:00Z, 2026-08-03T03:57:00Z)`
+- Kanonik 1m: `1.578.477`; ilk/son: `2023-08-03T00:00:00Z` /
+  `2026-08-03T03:56:00Z`
+- Üst zaman dilimleri: 15m `105.231`, 1h `26.307`, 4h `6.576`, 1d `1.096`
+- Her zaman diliminde satır sayısı = benzersiz open time sayısı
+- Tam dönem 1m boşluk ve veri kuralı doğrulaması: geçti
+- Parquet: `185` aylık bölüm; PostgreSQL ile tüm zaman dilimi toplamları eşleşiyor
+- Artakalan `.part` Parquet dosyası: `0`
+- 2026 Temmuz aylık arşivi henüz yoktu; `44.640` satır günlük arşivlerden tamamlandı
+- 2026-08-03 günlük arşivi henüz yoktu; kapanmış `237` dakika REST ile tamamlandı
+
 ## Kalite kapısı
 
 - `cargo fmt --all -- --check`: geçti
@@ -37,14 +50,16 @@ Yerel PostgreSQL 16 servisi üzerinde iki aşamalı kapı çalıştırıldı:
 
 ## Kalan kapsam
 
-Bir günlük ve bir aylık gerçek PostgreSQL/Parquet entegrasyonu doğrulandı. Varsayılan
-üç yıllık aktarım henüz çalıştırılmadı. REST onarımı gerçek arşiv boşluğu üzerinde ve
-üst zaman dilimleri Binance'ın yayımladığı örneklerle ayrıca karşılaştırılmadı.
+Varsayılan üç yıllık PostgreSQL/Parquet aktarımı tamamlandı. REST fallback gerçek
+günlük arşiv gecikmesinde çalıştı. Farklı içerik çatışması gerçek PostgreSQL servisine
+bilinçli olarak enjekte edilmedi; üst zaman dilimleri Binance'ın yayımladığı örneklerle
+ayrıca karşılaştırılmadı.
 
 ## Bilinen açıklar
 
 - PostgreSQL tekrar çalıştırma idempotency'si gerçek servis üzerinde sınandı; farklı
   içerik çatışmasının gerçek servis entegrasyon testi hâlâ eksik.
 - Manifestin `planned/downloaded/validated` geçişleri ve tam resume semantiği eksik.
+- Başarılı fallback sonrasında bulunamayan üst arşiv manifestte `failed` kalıyor.
 - İndirme güvenli fakat sıralı; CLI eşzamanlılık ayarı henüz yok.
 - Üst zaman dilimleri gerçek Binance örnekleriyle karşılaştırılmadı.
