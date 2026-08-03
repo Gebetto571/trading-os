@@ -33,11 +33,13 @@ işleme için şu komutlar kullanılır:
 
 ```bash
 python3 -m trading_os_bridge claim --worker codex-dev
+python3 -m trading_os_bridge status MESSAGE_UUID completed --worker codex-dev
 python3 -m trading_os_bridge recover --id MESSAGE_UUID
 python3 -m trading_os_bridge check MESSAGE_UUID
 ```
 
-`send`, `ingest`, `list` ve `status` yerel işlemler için korunur. `claim`, bir
+`send`, `ingest`, `list` ve `status` yerel işlemler için korunur. `status` yalnız
+claim sahibi ve geçerli süreyle `completed`/`failed` yazabilir. `claim`, bir
 mesajın aynı anda iki uygulayıcı tarafından çalıştırılmasını önler; `recover`
 yalnız kullanıcı talimatıyla yarım kalmış veya süresi dolmuş sahipliği kurtarır.
 Geçersiz ve bütünlüğü bozuk zarflar çalıştırılmaz, karantinaya alınır.

@@ -16,7 +16,9 @@ yaşayan kayıt ve merkezi fihrist önceliklidir.
 Köprü kullanıcı talimatlı proje kaynağı/GitHub devri; yerel `claim`, `recover`,
 tam zarf doğrulaması, içerik özeti, süreli sahiplik, karantina ve karar sürümlemesi
 ile uygulanmıştır. Migration yükseltmesi, tekrar/çatışma, durum geçişi, eşzamanlı
-claim ve inbox dışına kaçış senaryolarını kapsayan toplam 22 Python testi geçmiştir.
+claim/terminal yarışları, atomik migration rollback'i, özel dosya izinleri,
+arşivleme hatası, karantina denetimi ve inbox dışına kaçış senaryolarını kapsayan
+toplam 36 Python testi geçmiştir.
 Drive adaptörü ve eşitleme komutları kaldırılmıştır.
 
 BTCUSDT spot 1m veri katmanı `crates/market-data` altında uygulanmıştır. Rust format,
@@ -34,7 +36,11 @@ Ham veri `/Users/scm/Projects/trading-os/data` altında 379 dosya ve yaklaşık
 220 MB olarak tutulur. PostgreSQL kalıcı diski
 `trading-os_trading_os_market_data` adlı yerel Docker volume'üdür. Doğrulanmış
 özel-format yedek `/Users/scm/Projects/trading-os-backups/2026-08-03/` altında,
-yalnız kullanıcı erişimli dosya izniyle saklanır.
+yalnız kullanıcı erişimli dosya izniyle saklanır. Yedek geçici PostgreSQL veritabanına
+gerçekten geri yüklenmiş; beş zaman diliminin satır sayıları ve tarih aralıkları ana
+veritabanıyla birebir eşleşmiştir. Ana veri ve yedek aynı fiziksel diskte olduğundan
+bu düzen veritabanı/volume kaybına karşı korur, fiziksel disk arızasına karşı ikinci
+cihaz yedeği sayılmaz.
 
 Bilinen kalan işler: farklı içerik çatışmasının gerçek PostgreSQL entegrasyon testi,
 manifest durum makinesinin bütün geçişleri, yapılandırılabilir indirme eşzamanlılığı,

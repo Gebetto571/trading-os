@@ -20,6 +20,7 @@ planda zamanlanmış veya periyodik kontrol yapılmaz.
    işlemiyle yeniden kullanılabilir hâle gelir.
 6. Güvenli ve yetkili görev gerçekleştirilir; kod değişikliği varsa test edilir
    ve proje Git politikasına göre kaydedilir.
+   Son durum yalnız claim sahibi ve süresi geçmemiş lease ile yazılabilir.
 7. Sonuç aynı `correlation_id` ile yerel kayda yazılır; commit/PR bağlantısı ve
    doğrulama özeti kullanıcıya teslim edilir.
 8. Doğrulanıp SQLite'a alınan özgün zarf tekrar çalıştırılmaması için yerel ham
@@ -58,6 +59,7 @@ Bu durumlarda Codex görevi uygulamak yerine `status` türünde `approval_requir
 
 ```text
 claim      Sıradaki alınmış mesaj için süreli işlem sahipliği alır
+status     Claim sahibinin mesajı completed veya failed olarak kapatmasını sağlar
 recover    Belirtilen veya süresi dolmuş sahipliği kullanıcı talimatıyla kurtarır
 check      Belirtilen UUID'nin yerel kaydını salt okunur gösterir
 ```
@@ -71,4 +73,5 @@ taraması başlatmaz.
 - Doğrulanıp yerel kayda alınan özgün zarflar `var/archive/` altında tutulur;
   işlem durumu SQLite'ta izlenir.
 - Karantina, arşiv değildir. Şema/bütünlük sorunu çözülmeden dosya tamamlanmış
-  kabul edilmez ve ikinci kez çalıştırılmaz.
+  kabul edilmez ve ikinci kez çalıştırılmaz. Karantina olayı ve ham dosya özeti
+  SQLite denetim kaydında tutulur.

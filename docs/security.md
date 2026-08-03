@@ -22,7 +22,9 @@
 - Gelen zarfın adı güvenli bir temel ad olmalı; `..`, mutlak yol, sembolik bağlantı
   kaçışı ve izin verilen kökün dışına çözümleme reddedilir.
 - Yerel içe aktarma kökü açıkça verilir ve işlem öncesi gerçek yolu doğrulanır.
-- Artefakt SHA-256 özeti varsa kullanım öncesi yeniden hesaplanır. Aynı mesaj UUID'si
-  farklı içerik özetiyle gelirse tekrar değil `integrity_conflict` sayılır ve
-  karantinaya alınır.
+- Zarf doğrulayıcı artefaktın SHA-256 alan biçimini denetler; artefaktı açacak veya
+  çalıştıracak tüketici, dosya içeriğinin özetini kullanım öncesi yeniden hesaplayıp
+  zarf değeriyle eşleştirmek zorundadır. Köprü henüz artefakt indirme veya çalıştırma
+  yapmaz. Aynı mesaj UUID'si farklı içerik özetiyle gelirse tekrar değil
+  `integrity_conflict` sayılır ve karantinaya alınır.
 - Tamamlanmış veya karantinadaki özgün zarf denetim kanıtıdır; sessizce değiştirilmez.
