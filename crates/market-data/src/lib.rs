@@ -5,6 +5,7 @@ pub mod cli;
 pub mod db;
 pub mod download;
 pub mod parquet_export;
+pub mod parquet_verify;
 pub mod pipeline;
 pub mod rest;
 pub mod validation;

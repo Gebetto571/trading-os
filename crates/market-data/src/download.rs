@@ -3,6 +3,7 @@ use rand::Rng;
 use reqwest::{Client, StatusCode};
 use sha2::{Digest, Sha256};
 use std::{
+    future::Future,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -92,13 +93,19 @@ impl Downloader {
         tokio::time::sleep(retry_after.unwrap_or(exponential) + jitter).await;
     }
 
-    async fn download_to_part(
+    async fn download_to_part<F, Fut>(
         &self,
         url: &str,
         part: &Path,
-    ) -> Result<(u64, String), DownloadError> {
+        on_attempt: &mut F,
+    ) -> Result<(u64, String), DownloadError>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = anyhow::Result<()>>,
+    {
         let mut last = None;
         for attempt in 0..self.config.max_attempts {
+            on_attempt().await.map_err(DownloadError::Other)?;
             match self.client.get(url).send().await {
                 Ok(response) if response.status() == StatusCode::NOT_FOUND => {
                     return Err(DownloadError::NotFound(url.into()));
@@ -162,6 +169,20 @@ impl Downloader {
     }
 
     pub async fn download_verified(&self, url: &str, target: &Path) -> Result<u64, DownloadError> {
+        self.download_verified_tracked(url, target, || async { Ok(()) })
+            .await
+    }
+
+    pub async fn download_verified_tracked<F, Fut>(
+        &self,
+        url: &str,
+        target: &Path,
+        mut on_attempt: F,
+    ) -> Result<u64, DownloadError>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = anyhow::Result<()>>,
+    {
         fs::create_dir_all(target.parent().context("download target has no parent")?)
             .await
             .context("create download directory")?;
@@ -187,7 +208,7 @@ impl Downloader {
             }
         }
         let part = part_path(target);
-        let (size, actual) = self.download_to_part(url, &part).await?;
+        let (size, actual) = self.download_to_part(url, &part, &mut on_attempt).await?;
         if actual != expected {
             let _ = fs::remove_file(&part).await;
             return Err(DownloadError::ChecksumMismatch { expected, actual });
@@ -262,6 +283,10 @@ pub fn extract_single_csv(zip_path: &Path) -> anyhow::Result<Vec<u8>> {
 mod tests {
     use super::*;
     use httpmock::prelude::*;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
     #[tokio::test]
     async fn rejects_wrong_checksum() {
         let s = MockServer::start();
@@ -301,10 +326,51 @@ mod tests {
         let d = Downloader::new(Default::default()).unwrap();
         let temp = tempfile::tempdir().unwrap();
         let target = temp.path().join("x.zip");
+        let attempts = Arc::new(AtomicUsize::new(0));
         std::fs::write(part_path(&target), b"partial").unwrap();
-        d.download_verified(&u, &target).await.unwrap();
-        d.download_verified(&u, &target).await.unwrap();
+        for _ in 0..2 {
+            let attempts = Arc::clone(&attempts);
+            d.download_verified_tracked(&u, &target, move || {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                async { Ok(()) }
+            })
+            .await
+            .unwrap();
+        }
         data.assert_hits(1);
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn tracked_callback_counts_each_zip_attempt() {
+        let s = MockServer::start();
+        let u = format!("{}/x.zip", s.base_url());
+        s.mock(|w, t| {
+            w.path("/x.zip.CHECKSUM");
+            t.body(format!("{} x.zip", "0".repeat(64)));
+        });
+        let data = s.mock(|w, t| {
+            w.path("/x.zip");
+            t.status(500);
+        });
+        let d = Downloader::new(DownloadConfig {
+            max_attempts: 2,
+            base_backoff: Duration::ZERO,
+            ..Default::default()
+        })
+        .unwrap();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&attempts);
+        let temp = tempfile::tempdir().unwrap();
+        assert!(d
+            .download_verified_tracked(&u, &temp.path().join("x.zip"), move || {
+                observed.fetch_add(1, Ordering::SeqCst);
+                async { Ok(()) }
+            })
+            .await
+            .is_err());
+        data.assert_hits(2);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
     #[tokio::test]
     async fn honors_retry_limit() {

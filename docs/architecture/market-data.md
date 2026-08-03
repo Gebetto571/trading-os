@@ -22,9 +22,10 @@ deterministik plan
 ```
 
 Manifest `planned -> downloading -> downloaded -> checksum_verified -> imported
--> validated` geçişlerini izler. Yeniden deneme, hata ve aylık arşiv yerine
-günlük/REST fallback kullanılması açık durum geçişleridir; başarılı fallback üst
-arşivi başarısız durumda bırakmaz.
+-> validated` geçişlerini izler. Fallback önce `fallback_pending` olur ve yalnız
+tam UTC gün/ay kapsamı PostgreSQL'de doğrulanınca `fallback_complete` durumuna
+geçer. `invocation_count` iş akışı girişini, `attempt_count` ise yalnız gerçek ZIP
+HTTP denemelerini sayar; checksum ve geçerli cache kullanımı deneme sayılmaz.
 
 Tekillik anahtarı `venue + market_type + symbol + interval + open_time` değeridir.
 Aynı anahtarda farklı piyasa içeriği sessizce güncellenmez.
@@ -45,7 +46,10 @@ data/parquet/
 ## CLI
 
 Alt komutlar: `plan`, `download`, `import`, `validate`, `repair`, `aggregate`,
-`export-parquet`, `compare-binance`, `run`, `status`. `run` aşamaları güvenli
+`export-parquet`, `verify-parquet`, `compare-binance`, `run`, `status`. `run` aşamaları güvenli
 sırada çalıştırır. `--download-concurrency` 1-16 arasında ayarlanabilir ve
 varsayılanı 4'tür. `compare-binance`, UTC gün sınırları içindeki kanonik 15m, 1h,
 4h ve 1d mumları Binance'ın yayımladığı mumlarla birebir karşılaştırır.
+`verify-parquet`, seçilen aylardaki beş zaman diliminin Parquet şemasını, bölüm
+envanterini ve ihraç edilen 17 PostgreSQL alanını 4.096 satırlık akışlarla birebir
+karşılaştırır; JSON raporu üretir ve herhangi bir farkta başarısız olur.

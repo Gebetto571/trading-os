@@ -1,6 +1,6 @@
 use crate::candle::Candle;
 use anyhow::{bail, Context};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder, Row};
 use std::collections::HashMap;
 
@@ -127,6 +127,39 @@ pub async fn load_candles(
     Ok(rows.into_iter().map(Into::into).collect())
 }
 
+pub async fn load_candles_page(
+    pool: &PgPool,
+    symbol: &str,
+    interval: &str,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    after: Option<DateTime<Utc>>,
+    limit: i64,
+) -> anyhow::Result<Vec<Candle>> {
+    anyhow::ensure!(
+        (1..=4096).contains(&limit),
+        "page limit must be between 1 and 4096"
+    );
+    let rows = sqlx::query_as::<_, DbCandle>(
+        "SELECT venue,market_type,symbol,interval,open_time,open,high,low,close,base_asset_volume,close_time,quote_asset_volume,trade_count,taker_buy_base_volume,taker_buy_quote_volume,source,source_file
+         FROM market_candles
+         WHERE venue='binance' AND market_type='spot' AND symbol=$1 AND interval=$2
+           AND open_time >= $3 AND open_time < $4
+           AND ($5::timestamptz IS NULL OR open_time > $5)
+         ORDER BY open_time
+         LIMIT $6",
+    )
+    .bind(symbol)
+    .bind(interval)
+    .bind(start)
+    .bind(end)
+    .bind(after)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
 pub async fn validate_range(
     pool: &PgPool,
     symbol: &str,
@@ -206,6 +239,7 @@ pub enum ManifestStatus {
     ChecksumVerified,
     Imported,
     Validated,
+    FallbackPending,
     FallbackComplete,
     Failed,
 }
@@ -219,6 +253,7 @@ impl ManifestStatus {
             Self::ChecksumVerified => "checksum_verified",
             Self::Imported => "imported",
             Self::Validated => "validated",
+            Self::FallbackPending => "fallback_pending",
             Self::FallbackComplete => "fallback_complete",
             Self::Failed => "failed",
         }
@@ -232,6 +267,7 @@ impl ManifestStatus {
             "checksum_verified" => Ok(Self::ChecksumVerified),
             "imported" => Ok(Self::Imported),
             "validated" => Ok(Self::Validated),
+            "fallback_pending" => Ok(Self::FallbackPending),
             "fallback_complete" => Ok(Self::FallbackComplete),
             "failed" => Ok(Self::Failed),
             _ => bail!("unknown manifest status: {value}"),
@@ -249,7 +285,9 @@ fn manifest_transition_allowed(from: ManifestStatus, to: ManifestStatus) -> bool
             | (ChecksumVerified, Imported | Downloading | Failed)
             | (Imported, Validated | Downloading | Failed)
             | (Validated, Downloading)
-            | (Failed, Downloading | FallbackComplete)
+            | (Downloading, FallbackPending)
+            | (Failed, Downloading | FallbackPending)
+            | (FallbackPending, Downloading | FallbackComplete | Failed)
             | (FallbackComplete, Downloading)
     )
 }
@@ -261,13 +299,46 @@ pub async fn manifest_plan(
     period: &str,
     file_name: &str,
 ) -> anyhow::Result<()> {
-    sqlx::query("INSERT INTO download_manifest(source_url,source_type,period,file_name,status,attempt_count) VALUES($1,$2,$3,$4,'planned',0) ON CONFLICT(source_url) DO NOTHING")
+    sqlx::query("INSERT INTO download_manifest(source_url,source_type,period,file_name,status,invocation_count,attempt_count) VALUES($1,$2,$3,$4,'planned',0,0) ON CONFLICT(source_url) DO NOTHING")
         .bind(url)
         .bind(source_type)
         .bind(period)
         .bind(file_name)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+pub async fn manifest_plan_fallback(
+    pool: &PgPool,
+    url: &str,
+    source_type: &str,
+    period: &str,
+    file_name: &str,
+    parent_url: &str,
+) -> anyhow::Result<()> {
+    let result = sqlx::query(
+        "INSERT INTO download_manifest(
+             source_url,source_type,period,file_name,status,invocation_count,attempt_count,
+             fallback_parent_url
+         ) VALUES($1,$2,$3,$4,'planned',0,0,$5)
+         ON CONFLICT(source_url) DO UPDATE
+         SET fallback_parent_url=EXCLUDED.fallback_parent_url,
+             updated_at=now()
+         WHERE download_manifest.fallback_parent_url IS NULL
+            OR download_manifest.fallback_parent_url=EXCLUDED.fallback_parent_url",
+    )
+    .bind(url)
+    .bind(source_type)
+    .bind(period)
+    .bind(file_name)
+    .bind(parent_url)
+    .execute(pool)
+    .await?;
+    anyhow::ensure!(
+        result.rows_affected() == 1,
+        "fallback manifest parent conflicts with the existing parent for {url}"
+    );
     Ok(())
 }
 
@@ -296,10 +367,26 @@ async fn manifest_transition(pool: &PgPool, url: &str, to: ManifestStatus) -> an
 
 pub async fn manifest_downloading(pool: &PgPool, url: &str) -> anyhow::Result<()> {
     manifest_transition(pool, url, ManifestStatus::Downloading).await?;
-    sqlx::query("UPDATE download_manifest SET attempt_count=attempt_count+1,error_message=NULL,completed_at=NULL WHERE source_url=$1")
+    sqlx::query("UPDATE download_manifest SET invocation_count=invocation_count+1,error_message=NULL,completed_at=NULL,fallback_source_count=NULL,coverage_start=NULL,coverage_end=NULL,coverage_row_count=NULL WHERE source_url=$1")
         .bind(url)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+pub async fn manifest_download_attempt(pool: &PgPool, url: &str) -> anyhow::Result<()> {
+    let result = sqlx::query(
+        "UPDATE download_manifest
+         SET attempt_count=attempt_count+1,updated_at=now()
+         WHERE source_url=$1 AND status='downloading'",
+    )
+    .bind(url)
+    .execute(pool)
+    .await?;
+    anyhow::ensure!(
+        result.rows_affected() == 1,
+        "download attempt requires a downloading manifest for {url}"
+    );
     Ok(())
 }
 
@@ -361,18 +448,96 @@ pub async fn manifest_failed(pool: &PgPool, url: &str, error: &str) -> anyhow::R
     Ok(())
 }
 
+pub async fn manifest_fallback_pending(pool: &PgPool, url: &str) -> anyhow::Result<()> {
+    manifest_transition(pool, url, ManifestStatus::FallbackPending).await?;
+    sqlx::query(
+        "UPDATE download_manifest
+         SET completed_at=NULL,fallback_source_count=NULL,coverage_start=NULL,coverage_end=NULL,
+             coverage_row_count=NULL,updated_at=now()
+         WHERE source_url=$1",
+    )
+    .bind(url)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn manifest_fallback_complete(
     pool: &PgPool,
     url: &str,
     source_count: usize,
+    symbol: &str,
+    coverage_start: DateTime<Utc>,
+    coverage_end: DateTime<Utc>,
 ) -> anyhow::Result<()> {
-    manifest_transition(pool, url, ManifestStatus::FallbackComplete).await?;
-    sqlx::query("UPDATE download_manifest SET fallback_source_count=$2,error_message=NULL,completed_at=now() WHERE source_url=$1")
+    let manifest =
+        sqlx::query("SELECT source_type,period FROM download_manifest WHERE source_url=$1")
+            .bind(url)
+            .fetch_one(pool)
+            .await?;
+    let source_type: String = manifest.get("source_type");
+    let period: String = manifest.get("period");
+    let expected_coverage = manifest_period_bounds(&source_type, &period)?;
+    anyhow::ensure!(
+        (coverage_start, coverage_end) == expected_coverage,
+        "fallback completion requires full {source_type} calendar coverage {}..{}",
+        expected_coverage.0,
+        expected_coverage.1
+    );
+    let report = validate_range(pool, symbol, "1m", coverage_start, coverage_end).await?;
+    anyhow::ensure!(
+        report.is_valid(),
+        "fallback coverage is incomplete for {url}: {}",
+        serde_json::to_string(&report)?
+    );
+    let mut tx = pool.begin().await?;
+    let current: String =
+        sqlx::query_scalar("SELECT status FROM download_manifest WHERE source_url=$1 FOR UPDATE")
+            .bind(url)
+            .fetch_one(&mut *tx)
+            .await?;
+    let from = ManifestStatus::parse(&current)?;
+    anyhow::ensure!(
+        manifest_transition_allowed(from, ManifestStatus::FallbackComplete),
+        "invalid manifest transition {} -> fallback_complete for {url}",
+        from.as_str()
+    );
+    sqlx::query("UPDATE download_manifest SET status='fallback_complete',fallback_source_count=$2,coverage_start=$3,coverage_end=$4,coverage_row_count=$5,error_message=NULL,completed_at=now(),updated_at=now() WHERE source_url=$1")
         .bind(url)
         .bind(source_count as i32)
-        .execute(pool)
+        .bind(coverage_start)
+        .bind(coverage_end)
+        .bind(report.rows as i64)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(())
+}
+
+fn manifest_period_bounds(
+    source_type: &str,
+    period: &str,
+) -> anyhow::Result<(DateTime<Utc>, DateTime<Utc>)> {
+    let start = match source_type {
+        "daily" => chrono::NaiveDate::parse_from_str(period, "%Y-%m-%d")?,
+        "monthly" => chrono::NaiveDate::parse_from_str(&format!("{period}-01"), "%Y-%m-%d")?,
+        _ => bail!("unsupported fallback source type: {source_type}"),
+    }
+    .and_hms_opt(0, 0, 0)
+    .context("fallback period is invalid")?
+    .and_utc();
+    let end = if source_type == "daily" {
+        start + Duration::days(1)
+    } else {
+        (start + Duration::days(32))
+            .date_naive()
+            .with_day(1)
+            .context("monthly fallback end is invalid")?
+            .and_hms_opt(0, 0, 0)
+            .context("monthly fallback end is invalid")?
+            .and_utc()
+    };
+    Ok((start, end))
 }
 
 pub async fn manifest_is_validated(pool: &PgPool, url: &str) -> anyhow::Result<bool> {
@@ -384,29 +549,7 @@ pub async fn manifest_is_validated(pool: &PgPool, url: &str) -> anyhow::Result<b
     Ok(status.as_deref() == Some("validated"))
 }
 
-pub async fn reconcile_failed_daily_with_rest(
-    pool: &PgPool,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
-) -> anyhow::Result<u64> {
-    let urls: Vec<String> = sqlx::query_scalar(
-        "SELECT source_url FROM download_manifest
-         WHERE source_type='daily' AND status='failed'
-           AND period ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-           AND to_date(period, 'YYYY-MM-DD') >= $1::date
-           AND to_date(period, 'YYYY-MM-DD') < $2",
-    )
-    .bind(start)
-    .bind(end)
-    .fetch_all(pool)
-    .await?;
-    for url in &urls {
-        manifest_fallback_complete(pool, url, 0).await?;
-    }
-    Ok(urls.len() as u64)
-}
-
-pub async fn reconcile_failed_monthly_with_fallback(
+pub async fn reconcile_pending_daily_with_rest(
     pool: &PgPool,
     symbol: &str,
     start: DateTime<Utc>,
@@ -414,7 +557,40 @@ pub async fn reconcile_failed_monthly_with_fallback(
 ) -> anyhow::Result<u64> {
     let rows = sqlx::query(
         "SELECT source_url, period FROM download_manifest
-         WHERE source_type='monthly' AND status='failed'
+         WHERE source_type='daily' AND status='fallback_pending'
+           AND file_name LIKE $1
+           AND period ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+           AND to_date(period, 'YYYY-MM-DD') >= $2::date
+           AND (to_date(period, 'YYYY-MM-DD') + interval '1 day') <= $3",
+    )
+    .bind(format!("{symbol}-1m-%"))
+    .bind(start)
+    .bind(end)
+    .fetch_all(pool)
+    .await?;
+    for row in &rows {
+        let url: String = row.get("source_url");
+        let period: String = row.get("period");
+        let period_start = chrono::NaiveDate::parse_from_str(&period, "%Y-%m-%d")?
+            .and_hms_opt(0, 0, 0)
+            .context("daily fallback period is invalid")?
+            .and_utc();
+        let coverage_start = period_start;
+        let coverage_end = period_start + Duration::days(1);
+        manifest_fallback_complete(pool, &url, 0, symbol, coverage_start, coverage_end).await?;
+    }
+    Ok(rows.len() as u64)
+}
+
+pub async fn reconcile_pending_monthly_with_fallback(
+    pool: &PgPool,
+    symbol: &str,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> anyhow::Result<u64> {
+    let rows = sqlx::query(
+        "SELECT source_url, period FROM download_manifest
+         WHERE source_type='monthly' AND status='fallback_pending'
            AND file_name LIKE $1
            AND period ~ '^[0-9]{4}-[0-9]{2}$'
            AND to_date(period || '-01', 'YYYY-MM-DD') >= $2::date
@@ -430,13 +606,33 @@ pub async fn reconcile_failed_monthly_with_fallback(
         let period: String = row.get("period");
         let count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM download_manifest
-             WHERE source_type='daily' AND period LIKE $1
-               AND status IN ('imported','validated','fallback_complete')",
+             WHERE fallback_parent_url=$1
+               AND status IN ('validated','fallback_complete')",
         )
-        .bind(format!("{period}-%"))
+        .bind(&url)
         .fetch_one(pool)
         .await?;
-        manifest_fallback_complete(pool, &url, count as usize).await?;
+        let coverage_start =
+            chrono::NaiveDate::parse_from_str(&format!("{period}-01"), "%Y-%m-%d")?
+                .and_hms_opt(0, 0, 0)
+                .context("monthly fallback period is invalid")?
+                .and_utc();
+        let coverage_end = (coverage_start + Duration::days(32))
+            .date_naive()
+            .with_day(1)
+            .context("monthly fallback end is invalid")?
+            .and_hms_opt(0, 0, 0)
+            .context("monthly fallback end is invalid")?
+            .and_utc();
+        manifest_fallback_complete(
+            pool,
+            &url,
+            count as usize,
+            symbol,
+            coverage_start,
+            coverage_end,
+        )
+        .await?;
     }
     Ok(rows.len() as u64)
 }
@@ -448,12 +644,32 @@ pub async fn status(
     end: DateTime<Utc>,
 ) -> anyhow::Result<serde_json::Value> {
     let row=sqlx::query("SELECT count(*)::bigint AS rows,min(open_time) AS first,max(open_time) AS last FROM market_candles WHERE venue='binance' AND market_type='spot' AND symbol=$1 AND interval='1m' AND open_time >= $2 AND open_time < $3").bind(symbol).bind(start).bind(end).fetch_one(pool).await?;
-    let failed: i64 =
-        sqlx::query_scalar("SELECT count(*)::bigint FROM download_manifest WHERE status='failed'")
-            .fetch_one(pool)
-            .await?;
+    let manifest_count = |status: &'static str| async move {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint
+             FROM download_manifest
+             WHERE status=$1 AND file_name LIKE $2
+               AND CASE
+                 WHEN source_type='monthly' AND period ~ '^[0-9]{4}-[0-9]{2}$' THEN
+                   (to_date(period || '-01', 'YYYY-MM-DD')::timestamp AT TIME ZONE 'UTC') < $4
+                   AND ((to_date(period || '-01', 'YYYY-MM-DD') + interval '1 month')::timestamp AT TIME ZONE 'UTC') > $3
+                 WHEN source_type='daily' AND period ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN
+                   (to_date(period, 'YYYY-MM-DD')::timestamp AT TIME ZONE 'UTC') < $4
+                   AND ((to_date(period, 'YYYY-MM-DD') + interval '1 day')::timestamp AT TIME ZONE 'UTC') > $3
+                 ELSE false
+               END",
+        )
+        .bind(status)
+        .bind(format!("{symbol}-1m-%"))
+        .bind(start)
+        .bind(end)
+        .fetch_one(pool)
+        .await
+    };
+    let failed = manifest_count("failed").await?;
+    let fallback_pending = manifest_count("fallback_pending").await?;
     Ok(
-        serde_json::json!({"rows":row.get::<i64,_>("rows"),"first":row.try_get::<DateTime<Utc>,_>("first").ok(),"last":row.try_get::<DateTime<Utc>,_>("last").ok(),"failed_periods":failed}),
+        serde_json::json!({"rows":row.get::<i64,_>("rows"),"first":row.try_get::<DateTime<Utc>,_>("first").ok(),"last":row.try_get::<DateTime<Utc>,_>("last").ok(),"failed_periods":failed,"fallback_pending_periods":fallback_pending}),
     )
 }
 
@@ -512,6 +728,12 @@ mod tests {
         let sql = include_str!("../migrations/0001_market_data.sql");
         assert!(sql.contains("NUMERIC(38,18)"));
         assert!(sql.contains("PRIMARY KEY (venue, market_type, symbol, interval, open_time)"));
+        let semantics = include_str!("../migrations/0004_manifest_semantics.sql");
+        assert!(semantics.contains("RENAME COLUMN attempt_count TO invocation_count"));
+        assert!(semantics.contains("fallback_pending"));
+        assert!(semantics.contains("fallback_parent_url"));
+        assert!(semantics.contains("coverage_row_count"));
+        assert!(semantics.contains("WHERE status = 'fallback_complete'"));
     }
 
     #[test]
@@ -522,7 +744,11 @@ mod tests {
         assert!(manifest_transition_allowed(Downloaded, ChecksumVerified));
         assert!(manifest_transition_allowed(ChecksumVerified, Imported));
         assert!(manifest_transition_allowed(Imported, Validated));
-        assert!(manifest_transition_allowed(Failed, FallbackComplete));
+        assert!(manifest_transition_allowed(Downloading, FallbackPending));
+        assert!(manifest_transition_allowed(
+            FallbackPending,
+            FallbackComplete
+        ));
         assert!(manifest_transition_allowed(Validated, Downloading));
         assert!(!manifest_transition_allowed(Planned, Validated));
         assert!(manifest_transition_allowed(Downloading, Downloading));
@@ -563,6 +789,7 @@ mod tests {
             .await
             .is_err());
         manifest_downloading(&pool, url).await.unwrap();
+        manifest_download_attempt(&pool, url).await.unwrap();
         manifest_downloaded(&pool, url, 42).await.unwrap();
         manifest_verified(&pool, url, &"a".repeat(64), 42)
             .await
@@ -580,20 +807,104 @@ mod tests {
         assert!(manifest_is_validated(&pool, url).await.unwrap());
 
         let fallback = "https://example.test/missing.zip";
-        manifest_plan(&pool, fallback, "monthly", "2024-02", "missing.zip")
+        manifest_plan(&pool, fallback, "daily", "2024-02-01", "missing.zip")
             .await
             .unwrap();
         manifest_downloading(&pool, fallback).await.unwrap();
-        manifest_failed(&pool, fallback, "not found").await.unwrap();
-        manifest_fallback_complete(&pool, fallback, 29)
+        manifest_download_attempt(&pool, fallback).await.unwrap();
+        manifest_fallback_pending(&pool, fallback).await.unwrap();
+        let coverage_start = "2024-02-01T00:00:00Z".parse().unwrap();
+        let partial_end = "2024-02-01T00:01:00Z".parse().unwrap();
+        let coverage_end = "2024-02-02T00:00:00Z".parse().unwrap();
+        let mut covered = candle("2024-02-01T00:00:00Z");
+        covered.source = "rest".into();
+        insert_candles(&pool, &[covered]).await.unwrap();
+        assert!(manifest_fallback_complete(
+            &pool,
+            fallback,
+            0,
+            "BTCUSDT",
+            coverage_start,
+            partial_end,
+        )
+        .await
+        .is_err());
+        let full_day = (0..1_440)
+            .map(|minute| {
+                let mut row = candle(&(coverage_start + Duration::minutes(minute)).to_rfc3339());
+                row.source = "rest".into();
+                row
+            })
+            .collect::<Vec<_>>();
+        insert_candles(&pool, &full_day).await.unwrap();
+        manifest_fallback_complete(&pool, fallback, 0, "BTCUSDT", coverage_start, coverage_end)
             .await
             .unwrap();
-        let status: String =
-            sqlx::query_scalar("SELECT status FROM download_manifest WHERE source_url=$1")
-                .bind(fallback)
-                .fetch_one(&pool)
+        let row = sqlx::query(
+            "SELECT status,invocation_count,attempt_count,coverage_row_count
+             FROM download_manifest WHERE source_url=$1",
+        )
+        .bind(fallback)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.get::<String, _>("status"), "fallback_complete");
+        assert_eq!(row.get::<i32, _>("invocation_count"), 1);
+        assert_eq!(row.get::<i32, _>("attempt_count"), 1);
+        assert_eq!(row.get::<i64, _>("coverage_row_count"), 1_440);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn postgres_pages_candles_without_overlap(pool: PgPool) {
+        let rows = [
+            candle("2024-01-01T00:00:00Z"),
+            candle("2024-01-01T00:01:00Z"),
+            candle("2024-01-01T00:02:00Z"),
+        ];
+        insert_candles(&pool, &rows).await.unwrap();
+        let start = rows[0].open_time;
+        let end = rows[2].open_time + Duration::minutes(1);
+        let first = load_candles_page(&pool, "BTCUSDT", "1m", start, end, None, 2)
+            .await
+            .unwrap();
+        assert_eq!(first.len(), 2);
+        let second = load_candles_page(
+            &pool,
+            "BTCUSDT",
+            "1m",
+            start,
+            end,
+            first.last().map(|row| row.open_time),
+            2,
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].open_time, rows[2].open_time);
+        assert!(
+            load_candles_page(&pool, "BTCUSDT", "1m", start, end, None, 0)
                 .await
-                .unwrap();
-        assert_eq!(status, "fallback_complete");
+                .is_err()
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn fallback_plan_records_parent(pool: PgPool) {
+        let parent = "https://example.test/month.zip";
+        let child = "https://example.test/day.zip";
+        manifest_plan(&pool, parent, "monthly", "2024-01", "month.zip")
+            .await
+            .unwrap();
+        manifest_plan_fallback(&pool, child, "daily", "2024-01-01", "day.zip", parent)
+            .await
+            .unwrap();
+        let actual: String = sqlx::query_scalar(
+            "SELECT fallback_parent_url FROM download_manifest WHERE source_url=$1",
+        )
+        .bind(child)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(actual, parent);
     }
 }

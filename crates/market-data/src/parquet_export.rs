@@ -3,7 +3,7 @@ use anyhow::Context;
 use arrow_array::{
     ArrayRef, Decimal128Array, Int64Array, RecordBatch, StringArray, TimestampMicrosecondArray,
 };
-use arrow_schema::{DataType, Field, Schema, TimeUnit};
+use arrow_schema::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use parquet::{
     arrow::ArrowWriter,
     basic::{Compression, ZstdLevel},
@@ -35,11 +35,8 @@ fn decimal_array(
         Decimal128Array::from(values).with_precision_and_scale(38, 18)?,
     ))
 }
-pub fn export(candles: &[Candle], target: &Path) -> anyhow::Result<u64> {
-    std::fs::create_dir_all(target.parent().context("Parquet path has no parent")?)?;
-    let part = part_path(target);
-    let _ = std::fs::remove_file(&part);
-    let fields = vec![
+pub fn schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
         Field::new("schema_version", DataType::Utf8, false),
         Field::new("venue", DataType::Utf8, false),
         Field::new("market_type", DataType::Utf8, false),
@@ -70,8 +67,14 @@ pub fn export(candles: &[Candle], target: &Path) -> anyhow::Result<u64> {
         ),
         Field::new("source", DataType::Utf8, false),
         Field::new("source_file", DataType::Utf8, false),
-    ];
-    let schema = Arc::new(Schema::new(fields));
+    ]))
+}
+
+pub fn export(candles: &[Candle], target: &Path) -> anyhow::Result<u64> {
+    std::fs::create_dir_all(target.parent().context("Parquet path has no parent")?)?;
+    let part = part_path(target);
+    let _ = std::fs::remove_file(&part);
+    let schema = schema();
     let strings = |f: fn(&Candle) -> &str| {
         Arc::new(StringArray::from_iter_values(candles.iter().map(f))) as ArrayRef
     };

@@ -99,30 +99,41 @@ donduruldu. Sonuç **geçti**.
 - Manifest `row_count`, yeni eklenen satır değil işlenen aday satırdır. Önceki günlük
   2024-01-01 testi ile aylık arşiv çakışması kaynak atfında zararsız `1.440` satır
   farkı üretir; kanonik satır sayımı olarak kullanılmamalıdır.
-- Mevcut iki fallback final boşluksuz doğrulamadan geçti. Bununla birlikte
-  `fallback_complete` terminal geçişinin beklenen takvim günü ve kanonik kapsam
-  doğrulamasına doğrudan bağlanması takip iyileştirmesidir.
 - Resmî Binance üst zaman dilimi kanıtı bir günlük örnektir; üç yıllık dış arşiv
   karşılaştırması değildir. Üç yıllık kapsam için bağımsız 1m→aggregate SQL kanıtı
   kullanılmıştır.
+
+### Kalıcı kalite kapısı ve manifest düzeltmesi
+
+- `verify-parquet` kalıcı CLI kapısı iki tam çalıştırmada `185/185` bölüm ve
+  `1.717.687` satırı karşılaştırdı; hücre, şema veya bölüm farkı `0` oldu.
+- Migration 4, geçmiş `attempt_count` değerlerini `invocation_count` olarak korudu;
+  yeni `attempt_count` yalnız gerçek ZIP HTTP denemelerini saymaktadır.
+- Temmuz 2026 aylık arşivi bu doğrulama sırasında Binance'ta yayımlandığından bir
+  kez indirilip normal `validated` durumuna geçti. Sabit aralığın cache üzerinden
+  ikinci çalıştırmasında toplam gerçek indirme denemesi `1→1` olarak kaldı.
+- Son manifest sonucu `validated=98`, `fallback_pending=1`, `failed=0` oldu.
+  `2026-08-03` açık UTC günü tam gün oluşana kadar bilinçli olarak pending kalır.
+- Beş zaman diliminin satır ve benzersizlik sayıları değişmedi; 185 Parquet
+  dosyasının migration öncesi SHA-256 değerleri iki çalıştırma sonrasında da aynı kaldı.
 
 ## Kalite kapısı
 
 - `cargo fmt --all -- --check`: geçti
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: geçti
-- `cargo test --workspace --all-targets --all-features`: 24 geçti, 0 başarısız
+- `cargo test --workspace --all-targets --all-features`: 32 geçti, 0 başarısız
 - `python3 -m unittest discover -s tests -v`: 36 geçti, 0 başarısız
 - Gerçek PostgreSQL farklı içerik çelişmesi: doğru biçimde reddedildi
 - Manifest tam yaşam döngüsü ve fallback yaşam döngüsü: geçti
 - 2024-01-01 Binance karşılaştırması: 15m `96`, 1h `24`, 4h `6`, 1d `1` mum
   birebir eşleşti
-- Migration 1-3: başarılı
-- Manifest sonucu: `validated` 97, `fallback_complete` 2, `failed` 0
+- Migration 1-4: başarılı
+- Manifest sonucu: `validated` 98, `fallback_pending` 1, `failed` 0
 
 ## Tamamlanan önceki açıklar
 
 Farklı içerik çakışması gerçek PostgreSQL servisinde sınanmış ve reddedilmiştir.
-Manifestin normal, yeniden deneme, hata ve mevcut iki fallback geçişi uygulanmış;
-başarılı kayıtlar uzlaştırılmıştır. Kapsama bağlı terminalleştirme yukarıdaki teknik
-nüansla izlenmektedir. İndirme eşzamanlılığı 1-16 arasında ayarlanabilir hale
+Manifestin normal, yeniden deneme, hata ve fallback geçişi uygulanmış; başarılı
+kayıtlar uzlaştırılmış ve terminal fallback tam takvim kapsamına bağlanmıştır.
+İndirme eşzamanlılığı 1-16 arasında ayarlanabilir hale
 getirilmiştir. Üst zaman dilimleri gerçek Binance günlük örneğiyle karşılaştırılmıştır.
