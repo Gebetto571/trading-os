@@ -36,4 +36,12 @@ Mottomuz: “Hızlı çalışan, yükü az, pratik ve işlevsel çözümler üre
 - Dosya konumu belirsizse yeni dosya açma; `docs-manager` sohbetine yönlendir.
 - Açık kullanıcı talimatı olmadan periyodik dosya veya aktarım kontrolü yapma.
 - Sohbet kimliklerinde `docs/decisions/system/TOS-CHAT-REGISTRY__v1.0.md` kullan.
+- Her sohbet işe başlarken `role_key`, görev amacı, kullanacağı mevcut dosyalar ve
+  hedef çıktıyı belirler. Dosya yolu için TOS-DEC-004 bölüm 7.1 yönlendirme tablosu
+  bağlayıcıdır; tabloda karşılığı yoksa yolu `docs-manager` belirler.
+- Bulut veya uzman sohbeti kalıcı dosya yazma yetkisine sahip değilse sonuçlarını
+  TOS-DEC-004 bölüm 7.2 teslim sözleşmesiyle ana ajana verir. Bu teslim kendi başına
+  yeni Markdown dosyası değildir.
+- Diğer sohbetlere verilecek başlangıç talimatı ve Codex görev kartı
+  `docs/cloud-control.md` içindedir. Aynı talimatın farklı kopyalarını oluşturma.
 - Canlı işlem, para transferi, sır/parola paylaşımı, silme veya herkese açık erişim gibi etkili işlemler için kullanıcıdan açık onay al.
