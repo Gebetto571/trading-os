@@ -2,7 +2,7 @@
 id: TOS-DEC-004
 title: Merkezi Dosya Yönetim Anayasası
 status: sealed
-version: 1.4
+version: 1.5
 date: 2026-08-03
 last_updated: 2026-08-03
 authority: project-constitution
@@ -137,10 +137,15 @@ başladığında yalnız gereken klasör açılır. `data/`, `var/`, çalışma 
 
 ### 7.2. Diğer sohbetlerin dosya teslim sözleşmesi
 
-Her Trading OS sohbeti işe başlarken rolünü `TOS-CHAT-REGISTRY` içinden seçer ve şu
-dört bilgiyi açıklar: `role_key`, görev amacı, kullanacağı mevcut dosyalar ve üretmek
-istediği çıktı. Sohbet dosya yazma yetkisine sahip değilse dosya oluşturmaz; ana ajana
-şu yapıda teslim verir:
+Mevcut Trading OS sohbetinin rolü, o sohbetin kullanıcı tarafından verilmiş ilk rol
+mesajıdır. Sicil veya sonraki ortak talimat bu rolü değiştirmez. `TOS-CHAT-REGISTRY`,
+rolü yeniden atamak için değil; sabit `role_key` ve ilişkili ana belgeleri göstermek
+için kullanılır. Yeni sohbetin rolü de kullanıcı tarafından ilk mesajda belirlenir ve
+sonra sicile işlenir.
+
+Her sohbet görev sırasında `role_key`, görev amacı, kullanacağı mevcut dosyalar ve
+üretmek istediği çıktıyı esas alır. Sohbet dosya yazma yetkisine sahip değilse dosya
+oluşturmaz; ana ajana şu yapıda teslim verir:
 
 ```text
 ROL: <role_key>
@@ -158,6 +163,22 @@ Bu teslim bir Markdown dosyası değildir. Ana ajan içeriği doğrular; kodu uy
 kalıcı kararı mevcut yaşayan kayda ve dosya mimarisi değişikliğini bu anayasaya işler.
 Bulut sohbeti doğrudan yerel dosya yazdığını veya Codex'i kendiliğinden çalıştırdığını
 varsayamaz. Kullanıcı, görev kartı ya da GitHub bağlantısıyla açıkça devir yapar.
+
+### 7.3. Sohbet–ana belge ilişkisi
+
+Her mevcut sohbetin ilişkili Markdown belgeleri `TOS-CHAT-REGISTRY` içindeki
+**Sohbet–Ana Belge İlişki Matrisi** bölümünde gösterilir. Bu ilişki:
+
+- sohbetin ilk mesajındaki rolü değiştirmez;
+- belge üzerinde kendiliğinden yazma yetkisi vermez;
+- sohbetin öncelikle okuyacağı, kararlarında başvuracağı ve değişiklik gerekiyorsa
+  `docs-manager`a bildireceği ana belgeleri belirler;
+- merkezi fihristin `owner_chat`, `consumer_chats` ve `replaces_or_related`
+  alanlarıyla karşılıklı izlenir.
+
+Bir sohbetin kapsamı değişirse rolü sessizce değiştirilmez. Kullanıcı yeni kapsamı
+açıkça verir; `docs-manager` yalnız ilişki matrisini ve gerekiyorsa fihristteki mevcut
+satırları günceller. Aynı ilişkiyi göstermek için yeni Markdown dosyası açılmaz.
 
 ## 8. Adlandırma ve sürümleme
 
@@ -298,6 +319,7 @@ Değişiklik için:
 
 | Tarih | Sürüm | Değişiklik | Onay |
 |---|---:|---|---|
+| 2026-08-03 | 1.5 | Mevcut sohbetlerin ilk mesajındaki rolün esas olduğu ve sohbet–ana belge ilişkilerinin merkezi sicilde tutulacağı mühürlendi. | Kullanıcı talimatı |
 | 2026-08-03 | 1.4 | Kanonik klasör yönlendirme tablosu ve diğer sohbetlerin rol-temelli dosya teslim sözleşmesi mühürlendi. | Kullanıcı talimatı |
 | 2026-08-03 | 1.3 | Drive depolama ve eşitleme katmanı kaldırıldı; tüm çalışma dosyaları lokal, izlenen kod ve belgelerin uzak yedeği private GitHub olarak mühürlendi. | Kullanıcı talimatı |
 | 2026-08-03 | 1.2 | Kod deposu lokal alana taşındı; Drive seçici belge/iletişim katmanı yapıldı; docs-manager tek-yazıcı, çok-ajan sınırı ve doğrulanabilir fihrist yaşam döngüsü mühürlendi. | Kullanıcı talimatı |

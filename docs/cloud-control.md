@@ -3,10 +3,12 @@
 Bu belge ChatGPT bulut sohbetleri ile yerel Codex çalışma alanı arasındaki
 kullanıcı denetimli devir kartıdır.
 
-## Diğer sohbetlere verilecek ana talimat
+## Yeni sohbetlere verilecek ana talimat
 
-Yeni veya mevcut bir Trading OS sohbetine aşağıdaki talimat verilir. Köşeli alanlar
-göreve göre doldurulur; diğer hükümler değiştirilmez.
+Mevcut sohbetlerin kullanıcı tarafından verilmiş ilk rol mesajları geçerlidir; bu
+talimat mevcut sohbetlere yeniden rol vermek için kullanılmaz. Aşağıdaki tam talimat
+yalnız yeni bir Trading OS sohbeti açılırken kullanılır. Köşeli alanlar göreve göre
+doldurulur; diğer hükümler değiştirilmez.
 
 ```text
 Trading OS projesinde çalışıyorsun.
@@ -39,8 +41,11 @@ Yerel dosyaya veya Codex'e doğrudan erişimin yoksa erişiyormuş gibi davranma
 Codex için uygulanabilir bir görev kartı hazırla ve kullanıcı devrini bekle.
 ```
 
-Bu ana talimat sohbet başına bir kez verilir. Sonraki işlerde yalnız rol veya görev
-değişmişse ilgili iki satır güncellenir.
+Bu ana talimat yeni sohbet başına bir kez verilir. Mevcut sohbetlere tekrar
+gönderilmez. Mevcut sohbetin ilişkili ana belgeleri
+`docs/decisions/system/TOS-CHAT-REGISTRY__v1.0.md` içindeki ilişki matrisinden
+okunur. Kullanıcı rolü açıkça değiştirmedikçe yalnız yeni görev verilir; ortak dosya
+talimatı rol değişikliği sayılmaz.
 
 ## Bulut sohbeti başladığında
 

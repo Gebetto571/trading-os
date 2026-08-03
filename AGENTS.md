@@ -36,6 +36,9 @@ Mottomuz: “Hızlı çalışan, yükü az, pratik ve işlevsel çözümler üre
 - Dosya konumu belirsizse yeni dosya açma; `docs-manager` sohbetine yönlendir.
 - Açık kullanıcı talimatı olmadan periyodik dosya veya aktarım kontrolü yapma.
 - Sohbet kimliklerinde `docs/decisions/system/TOS-CHAT-REGISTRY__v1.0.md` kullan.
+- Mevcut sohbetin rolü, kullanıcının o sohbette verdiği ilk rol mesajıdır. Ortak
+  talimatla rolü yeniden atama veya genişletme. İlişkili ana Markdown belgelerini
+  TOS-CHAT-REGISTRY içindeki Sohbet–Ana Belge İlişki Matrisi'nden belirle.
 - Her sohbet işe başlarken `role_key`, görev amacı, kullanacağı mevcut dosyalar ve
   hedef çıktıyı belirler. Dosya yolu için TOS-DEC-004 bölüm 7.1 yönlendirme tablosu
   bağlayıcıdır; tabloda karşılığı yoksa yolu `docs-manager` belirler.
