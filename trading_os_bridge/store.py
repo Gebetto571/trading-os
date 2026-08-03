@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from .validation import canonical_bytes, sha256_bytes
 
@@ -21,7 +23,7 @@ class InvalidTransition(ValueError):
 
 
 TRANSITIONS = {
-    "queued": {"received", "processing", "failed"},
+    "queued": {"processing", "failed"},
     # received -> processing yalnız atomik claim_message() üzerinden yapılır.
     "received": {"failed"},
     "processing": {"completed", "failed"},
@@ -35,9 +37,18 @@ class Store:
         self.database = database
         self.migrations = migrations
 
+    def _secure_database_files(self) -> None:
+        for path in (self.database, Path(str(self.database) + "-wal"), Path(str(self.database) + "-shm")):
+            if path.exists():
+                os.chmod(path, 0o600)
+
     def connect(self, timeout: float = 5.0) -> sqlite3.Connection:
-        self.database.parent.mkdir(parents=True, exist_ok=True)
+        parent_existed = self.database.parent.exists()
+        self.database.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not parent_existed:
+            os.chmod(self.database.parent, 0o700)
         connection = sqlite3.connect(self.database, timeout=timeout)
+        self._secure_database_files()
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 5000")
@@ -45,21 +56,38 @@ class Store:
 
     def migrate(self) -> int:
         applied = 0
-        with self.connect() as connection:
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
-            )
-            known = {row[0] for row in connection.execute("SELECT version FROM schema_migrations")}
-            for path in sorted(self.migrations.glob("[0-9][0-9][0-9]_*.sql")):
-                version = int(path.name.split("_", 1)[0])
-                if version in known:
-                    continue
-                connection.executescript(path.read_text(encoding="utf-8"))
+        try:
+            with self.connect() as connection:
                 connection.execute(
-                    "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-                    (version, utc_now()),
+                    "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
                 )
-                applied += 1
+                known = {row[0] for row in connection.execute("SELECT version FROM schema_migrations")}
+                for path in sorted(self.migrations.glob("[0-9][0-9][0-9]_*.sql")):
+                    version = int(path.name.split("_", 1)[0])
+                    if version in known:
+                        continue
+                    sql = path.read_text(encoding="utf-8")
+                    statements = sql.splitlines()
+                    body_lines = []
+                    for line in statements:
+                        if line.strip().upper().startswith("PRAGMA "):
+                            connection.execute(line.strip().rstrip(";"))
+                        else:
+                            body_lines.append(line)
+                    applied_at = utc_now().replace("'", "''")
+                    script = (
+                        "BEGIN IMMEDIATE;\n" + "\n".join(body_lines) +
+                        f"\nINSERT INTO schema_migrations(version, applied_at) VALUES ({version}, '{applied_at}');\nCOMMIT;"
+                    )
+                    try:
+                        connection.executescript(script)
+                    except Exception:
+                        if connection.in_transaction:
+                            connection.rollback()
+                        raise
+                    applied += 1
+        finally:
+            self._secure_database_files()
         return applied
 
     def put_message(
@@ -112,14 +140,36 @@ class Store:
                 (limit,),
             ))
 
-    def update_status(self, message_id: str, status: str, error: str | None = None) -> bool:
+    def update_status(
+        self, message_id: str, status: str, error: str | None = None, worker: str | None = None,
+    ) -> bool:
         with self.connect() as connection:
-            row = connection.execute("SELECT status FROM messages WHERE id = ?", (message_id,)).fetchone()
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status, direction, claimed_by, lease_until FROM messages WHERE id = ?", (message_id,)
+            ).fetchone()
             if row is None:
                 return False
             current = row["status"]
-            if status == current:
+            if current == "processing" and status in {"completed", "failed"}:
+                if not worker:
+                    raise InvalidTransition("Terminal durum için claim sahibi worker zorunlu")
+                now = utc_now()
+                cursor = connection.execute(
+                    """UPDATE messages SET status=?, last_error=?, terminal_by=?, terminal_at=?, lease_until=NULL,
+                       updated_at=? WHERE id=? AND status='processing' AND claimed_by=?
+                       AND lease_until IS NOT NULL AND lease_until > ?""",
+                    (status, error, worker, now, now, message_id, worker, now),
+                )
+                if cursor.rowcount != 1:
+                    raise InvalidTransition("Claim sahibi veya geçerli lease eşleşmedi")
                 return True
+            if status == current:
+                if status in {"completed", "failed"}:
+                    raise InvalidTransition("Terminal durum yeniden yazılamaz")
+                return True
+            if status == "processing" and row["direction"] == "inbound":
+                raise InvalidTransition("Inbound processing yalnız claim_message ile başlatılabilir")
             if status not in TRANSITIONS.get(current, set()):
                 raise InvalidTransition(f"İzin verilmeyen durum geçişi: {current} -> {status}")
             connection.execute(
@@ -130,6 +180,39 @@ class Store:
                 (status, error, status, status, utc_now(), message_id),
             )
             return True
+
+    def activate_inbound(self, message_id: str, archive_uri: str) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE messages SET status='received', source_uri=?, received_at=?, updated_at=?
+                   WHERE id=? AND direction='inbound' AND status='queued'""",
+                (archive_uri, utc_now(), utc_now(), message_id),
+            )
+            return cursor.rowcount == 1
+
+    def cancel_inbound_reservation(self, message_id: str) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM messages WHERE id=? AND direction='inbound' AND status='queued'",
+                (message_id,),
+            )
+            return cursor.rowcount == 1
+
+    def reconcile_pending_ingests(self) -> int:
+        recovered = 0
+        with self.connect() as connection:
+            rows = list(connection.execute(
+                "SELECT id, source_uri FROM messages WHERE direction='inbound' AND status='queued'"
+            ))
+            for row in rows:
+                uri = urlparse(row["source_uri"] or "")
+                if uri.scheme == "file" and Path(unquote(uri.path)).is_file():
+                    cursor = connection.execute(
+                        "UPDATE messages SET status='received', received_at=?, updated_at=? WHERE id=? AND status='queued'",
+                        (utc_now(), utc_now(), row["id"]),
+                    )
+                    recovered += cursor.rowcount
+        return recovered
 
     def claim_message(self, worker: str, lease_seconds: int = 300) -> sqlite3.Row | None:
         if not worker or lease_seconds < 1:
@@ -170,10 +253,12 @@ class Store:
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT status, lease_until FROM messages WHERE id=?", (message_id,)
+                "SELECT status, direction, lease_until FROM messages WHERE id=?", (message_id,)
             ).fetchone()
             if row is None:
                 return False
+            if row["direction"] != "inbound":
+                raise InvalidTransition("Yalnız inbound mesaj sahipliği kurtarılabilir")
             recoverable = row["status"] == "failed" or (
                 row["status"] == "processing" and row["lease_until"] is not None and row["lease_until"] <= now
             )
@@ -181,17 +266,24 @@ class Store:
                 raise InvalidTransition(f"Mesaj kurtarılabilir durumda değil: {row['status']}")
             connection.execute(
                 """UPDATE messages SET status='received', claimed_by=NULL, claimed_at=NULL,
-                   lease_until=NULL, last_error=?, updated_at=? WHERE id=?""",
+                   lease_until=NULL, terminal_by=NULL, terminal_at=NULL,
+                   last_error=?, updated_at=? WHERE id=?""",
                 (reason, now, message_id),
             )
             return True
 
-    def mark_quarantine(self, message_id: str, uri: str, error: str) -> None:
+    def record_quarantine(
+        self, kind: str, source_uri: str, quarantine_uri: str | None, error: str,
+        message_id: str | None = None, raw_sha256: str | None = None,
+    ) -> int:
         with self.connect() as connection:
-            connection.execute(
-                "UPDATE messages SET quarantined_at=?, quarantine_uri=?, last_error=?, updated_at=? WHERE id=?",
-                (utc_now(), uri, error, utc_now(), message_id),
+            cursor = connection.execute(
+                """INSERT INTO quarantine_events(
+                   occurred_at, kind, source_uri, quarantine_uri, message_id, raw_sha256, error_text
+                   ) VALUES(?,?,?,?,?,?,?)""",
+                (utc_now(), kind, source_uri, quarantine_uri, message_id, raw_sha256, error),
             )
+            return int(cursor.lastrowid)
 
     def put_decision(self, decision_id: str, title: str, status: str, body: str,
                      source_message_id: str | None = None, version: int | None = None) -> int:

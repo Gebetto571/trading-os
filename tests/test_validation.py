@@ -2,7 +2,7 @@ import copy
 import unittest
 import uuid
 
-from trading_os_bridge.validation import canonical_bytes, sha256_bytes, validate_message
+from trading_os_bridge.validation import canonical_bytes, parse_json_strict, sha256_bytes, validate_message
 
 
 def valid_message():
@@ -91,6 +91,14 @@ class ValidationTests(unittest.TestCase):
                 candidate["artifacts"] = [copy.deepcopy(artifact)]
                 with self.assertRaises(ValueError):
                     validate_message(candidate)
+
+    def test_duplicate_json_keys_and_large_metadata_are_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_json_strict(b'{"id":"first","id":"second"}')
+        message = valid_message()
+        message["metadata"] = {"large": "x" * 17_000}
+        with self.assertRaises(ValueError):
+            validate_message(message)
 
 
 if __name__ == "__main__":
