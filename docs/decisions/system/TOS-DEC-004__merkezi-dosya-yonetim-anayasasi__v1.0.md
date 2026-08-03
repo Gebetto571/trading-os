@@ -2,7 +2,7 @@
 id: TOS-DEC-004
 title: Merkezi Dosya Yönetim Anayasası
 status: sealed
-version: 1.5
+version: 1.6
 date: 2026-08-03
 last_updated: 2026-08-03
 authority: project-constitution
@@ -84,7 +84,7 @@ Yeni Markdown dosyasında kısa bir `creation_reason` alanı bulunur ve yukarıd
 ## 7. Konumlandırma
 
 Kod, belgeler ve çalışma verileri yerelde tutulur. Kodla birlikte sürümlenecek
-teknik içerik yerel Git deposunda hazırlanır ve private GitHub deposuna gönderilir:
+teknik içerik yerel Git deposunda hazırlanır ve public GitHub deposuna gönderilir:
 
 `/Users/scm/Projects/trading-os`
 
@@ -191,7 +191,7 @@ satırları günceller. Aynı ilişkiyi göstermek için yeni Markdown dosyası 
 ## 9. Sürüm ve yedekleme kuralı
 
 - Yerel Git deposu izlenen kod ve belgelerin tek çalışma kaynağıdır.
-- Yerel Git deposu ile private GitHub arasındaki teknik geçmişi Git yönetir.
+- Yerel Git deposu ile public GitHub arasındaki teknik geçmişi Git yönetir.
 - Drive eşitlemesi yapılmaz; eski Drive kopyaları güncel kaynağın yerine geçmez.
 - Çakışmada en yeni dosya körlemesine seçilmez; değişiklikler karşılaştırılıp birleştirilir.
 - Sırlar, parolalar, API anahtarları ve kişisel veriler Markdown belgelerine veya Git'e yazılmaz.
@@ -255,7 +255,7 @@ Yeni bir Markdown dosyası oluşturacak sohbet:
    kimliği yalnız `docs-manager` ayırır.
 5. Dosyada `creation_reason`, sahibi, kullanıcıları ve amacı belirtir.
 6. Dosyayı oluşturduğu işlem içinde fihriste yeni satır ekler.
-7. Yerel Git kaydını ve gerekiyorsa private GitHub karşılığını günceller.
+7. Yerel Git kaydını ve gerekiyorsa public GitHub karşılığını günceller.
 8. Dosyanın ve fihrist kaydının erişilebilir olduğunu doğrular.
 
 Fihrist güncellenemiyorsa zorunlu olmayan yeni Markdown dosyası oluşturulmaz. Zorunlu teknik üretimde dosya oluşturulabilir ancak aynı görev tamamlanmadan fihrist kaydı da tamamlanır. Sıradaki sicil numarası metinde sabitlenmez; mevcut en yüksek doğrulanmış `MD-NNN` değerinden seri biçimde hesaplanır.
@@ -313,12 +313,13 @@ Değişiklik için:
 1. Kullanıcı açıkça anayasa değişikliği ister.
 2. Değişiklik aynı dosyada yapılır; sırf yeni sürüm için ayrı Markdown dosyası açılmaz.
 3. Aşağıdaki geçmişe tarih, sürüm ve kısa gerekçe eklenir.
-4. Yerel Git değişikliği doğrulanır ve private GitHub geçmişine gönderilir.
+4. Yerel Git değişikliği doğrulanır ve public GitHub geçmişine gönderilir.
 
 ## 14. Değişiklik geçmişi
 
 | Tarih | Sürüm | Değişiklik | Onay |
 |---|---:|---|---|
+| 2026-08-03 | 1.6 | Kanonik yerel depo yolu yeniden doğrulandı; eski Drive yolları geçersiz, GitHub deposunun güncel görünürlüğü public olarak mühürlendi. | Kullanıcı talimatı ve canlı doğrulama |
 | 2026-08-03 | 1.5 | Mevcut sohbetlerin ilk mesajındaki rolün esas olduğu ve sohbet–ana belge ilişkilerinin merkezi sicilde tutulacağı mühürlendi. | Kullanıcı talimatı |
 | 2026-08-03 | 1.4 | Kanonik klasör yönlendirme tablosu ve diğer sohbetlerin rol-temelli dosya teslim sözleşmesi mühürlendi. | Kullanıcı talimatı |
 | 2026-08-03 | 1.3 | Drive depolama ve eşitleme katmanı kaldırıldı; tüm çalışma dosyaları lokal, izlenen kod ve belgelerin uzak yedeği private GitHub olarak mühürlendi. | Kullanıcı talimatı |

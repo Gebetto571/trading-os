@@ -8,7 +8,7 @@ Bu depo iki kalıcı katmanlıdır:
   kayıtları ve hızlı geliştirme burada tutulur.
 - **GitHub:** Kodun ve kalıcı teknik belgelerin sürüm geçmişi ve uzak yedeği.
 
-Private GitHub deposu: <https://github.com/Gebetto571/trading-os>
+Public GitHub deposu: <https://github.com/Gebetto571/trading-os>
 
 ## Hızlı başlangıç
 

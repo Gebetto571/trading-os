@@ -5,14 +5,14 @@
 | Konum | İşlev |
 |---|---|
 | `/Users/scm/Projects/trading-os` | Tek yerel kod, belge ve Git çalışma alanı |
-| Private GitHub `Gebetto571/trading-os` | Sürümlü uzak yedek ve inceleme/devir bağlantıları |
+| Public GitHub `Gebetto571/trading-os` | Sürümlü uzak yedek ve inceleme/devir bağlantıları |
 | ChatGPT proje kaynağı | Kullanıcının açıkça eklediği bulut sohbet görev bağlamı |
 | `var/` | Git dışı yerel mesaj, arşiv, karantina ve veritabanı verileri |
 
 ## Git politikası
 
 - Ana ve tek yerel kod deposu `/Users/scm/Projects/trading-os` konumundadır;
-  standart `.git` metadata'sını kullanır ve özel GitHub deposuna
+  standart `.git` metadata'sını kullanır ve public GitHub deposuna
   `origin` adıyla bağlıdır. Normal, etkileşimsiz Git komutları kullanılır.
 - Ana dal: `main`.
 - İş dalları: `agent/<kısa-konu>` veya `feature/<kısa-konu>`.
@@ -30,7 +30,8 @@ git log --oneline
 ## GitHub politikası
 
 - Depo: <https://github.com/Gebetto571/trading-os>
-- Depo varsayılan olarak **private** oluşturulur.
+- Depo kullanıcı onayıyla **public** yapılmıştır; kaynak kod ve belgeler herkesçe
+  okunabilir. Sırlar, ham piyasa verisi ve çalışma veritabanları Git dışında kalır.
 - `main` doğrudan günlük geliştirme için kullanılmaz; değişiklikler dal ve inceleme üzerinden birleşir.
 - GitHub kodun ve teknik belgelerin uzak, sürümlü kopyası ve devir kanalıdır.
 - Bulut sohbet görevi kullanıcı tarafından proje kaynağına eklenir veya GitHub
@@ -39,7 +40,7 @@ git log --oneline
 
 ## Yedekleme
 
-- Kod ve teknik belgeler: `/Users/scm/Projects/trading-os` + özel GitHub deposu.
+- Kod ve teknik belgeler: `/Users/scm/Projects/trading-os` + public GitHub deposu.
 - SQLite: uygulama kapalıyken tarih damgalı şifreli yedek; GitHub'a gönderilmez.
 - Yerel karar/raporlar: Git üzerinden sürümlenir ve GitHub'a yedeklenir.
 

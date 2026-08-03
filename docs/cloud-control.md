@@ -66,14 +66,14 @@ ancak kullanıcının açık talimatından sonra alır, yerel Git dalında uygul
 eder ve sonucu commit/PR bağlantısı ile bildirir. Kalıcı teknik gerçek yerel Git
 ve GitHub'daki sürümlü dosyalardır.
 
-Private kod deposu: <https://github.com/Gebetto571/trading-os>
+Public kod deposu: <https://github.com/Gebetto571/trading-os>
 
 ## Devir yönleri
 
 - ChatGPT → Codex: kullanıcı tarafından eklenen proje kaynağı veya GitHub görev bağlantısı
 - Codex → ChatGPT: kullanıcı aracılığıyla verilen commit/PR ve sonuç özeti
 - Kalıcı kod ve belge: `/Users/scm/Projects/trading-os`
-- Sürüm ve uzak yedek: private GitHub `Gebetto571/trading-os`
+- Sürüm ve uzak yedek: public GitHub `Gebetto571/trading-os`
 
 ## Codex'i çalıştırma
 

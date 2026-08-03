@@ -3,7 +3,9 @@
 - Canlı borsa anahtarları, cüzdan özel anahtarları, seed phrase ve erişim tokenları
   proje kaynağına veya Git'e yazılmaz.
 - `.env` yalnız yereldir; depoda sadece `.env.example` bulunur.
-- GitHub deposu başlangıçta private olmalıdır.
+- GitHub deposu kullanıcı onayıyla public durumdadır. Bu nedenle Git'e eklenen her
+  içerik herkese açık kabul edilir; sır, ham piyasa verisi, çalışma veritabanı,
+  kişisel veri ve yerel günlükler commit edilmez.
 - Proje kaynaklarında hesap numarası ve kişisel veri en aza indirilir.
 - Artefakt bütünlüğü SHA-256 ile doğrulanabilir.
 - AI bileşeni canlı emir gönderemez, risk limiti yükseltemez ve sistemi kendi başına canlı moda alamaz.

@@ -1,11 +1,11 @@
 # ChatGPT project context
 
 This directory is the primary local Git repository for “Trading OS” and is connected
-to the private GitHub repository `Gebetto571/trading-os`.
+to the public GitHub repository `Gebetto571/trading-os`.
 
 - Canonical local checkout: `/Users/scm/Projects/trading-os`.
 - Project code, documents, databases, build output, and raw working data stay local.
-  Google Drive is not a project storage or synchronization layer. GitHub is the private,
+  Google Drive is not a project storage or synchronization layer. GitHub is the public,
   versioned remote backup for tracked code and documents; secrets and market data are not
   pushed there.
 
