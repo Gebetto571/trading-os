@@ -15,8 +15,11 @@
 
 ## Git politikası
 
-- Ana yerel repository standart `.git` metadata'sını kullanır ve özel GitHub deposuna
+- Ana ve tek yerel kod deposu `/Users/scm/Projects/trading-os` konumundadır;
+  standart `.git` metadata'sını kullanır ve özel GitHub deposuna
   `origin` adıyla bağlıdır. Normal, etkileşimsiz Git komutları kullanılır.
+- Eski `/Users/scm/Drive'ım/Trading OS/07_KOD/trading-os` kopyası çalışma alanı
+  olarak kullanılmaz; taşıma doğrulandıktan sonra kalıntı bırakmadan kaldırılır.
 - Ana dal: `main`.
 - İş dalları: `agent/<kısa-konu>` veya `feature/<kısa-konu>`.
 - Küçük, tek amaçlı kayıtlar yapılır.
@@ -35,12 +38,29 @@ git log --oneline
 - Depo: <https://github.com/Gebetto571/trading-os>
 - Depo varsayılan olarak **private** oluşturulur.
 - `main` doğrudan günlük geliştirme için kullanılmaz; değişiklikler dal ve inceleme üzerinden birleşir.
-- GitHub uzak yedektir ama Drive'ın yerine geçmez.
-- Belgelerin kalıcı ve teknik sürümü GitHub'dadır; sohbet aktarım kopyası Drive'dadır.
+- GitHub kodun ve teknik belgelerin uzak, sürümlü kopyasıdır.
+- Drive kod deposu veya `.git` taşımaz. Yalnız sohbet iletişimi, karar kaynağı,
+  rapor ve paylaşılacak çıktılar için kullanılır.
 - Anahtarlar daha sonra GitHub Secrets içinde tutulur, dosyaya yazılmaz.
 
 ## Yedekleme
 
-- Kod ve belgeler: yerel Git + özel GitHub deposu.
+- Kod ve teknik belgeler: `/Users/scm/Projects/trading-os` + özel GitHub deposu.
 - SQLite: uygulama kapalıyken tarih damgalı şifreli yedek; GitHub'a gönderilmez.
 - Drive karar/raporları: gerektiğinde Git deposundaki Markdown karşılığıyla eşleştirilir.
+
+## İki ayrı arşiv
+
+- İletişim zarfları: `/Users/scm/Drive'ım/Trading OS/90_ARSIV`
+- Geçersizleşmiş karar ve yönetilen Markdown belgeleri:
+  `/Users/scm/Drive'ım/Trading OS/03_KARARLAR/90_ARSIV`
+
+Bu klasörler birbirinin yerine kullanılmaz. Bir karar belgesi mesaj arşivine, bir
+JSON iletişim zarfı karar arşivine taşınmaz.
+
+## Talimatlı Drive eşitlemesi
+
+Drive işlemleri periyodik değildir. Kök dizin çalışma anında
+`TRADING_OS_DRIVE_ROOT` ortam değişkeninden alınır. `sync-pull` ve `sync-push`
+yalnız kullanıcı açıkça istediğinde çalışır; eksik veya beklenmeyen kök değerinde
+işlem güvenli biçimde durur.

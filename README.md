@@ -4,7 +4,8 @@ Trading OS; araştırma, risk, yürütme ve yapay zekâ destekli denetim bileşe
 
 Bu depo üç katmanlıdır:
 
-- **Yerel çalışma alanı:** Kod, testler, SQLite kayıtları ve hızlı geliştirme.
+- **Yerel çalışma alanı:** `/Users/scm/Projects/trading-os`; kod, testler, SQLite
+  kayıtları ve hızlı geliştirme burada tutulur.
 - **Google Drive:** ChatGPT bulut sohbetleri ile Codex arasında kontrollü mesaj ve belge aktarımı.
 - **GitHub:** Kodun ve kalıcı teknik belgelerin sürüm geçmişi ve uzak yedeği.
 
@@ -26,6 +27,23 @@ python3 -m trading_os_bridge list
 python3 -m trading_os_bridge ingest var/inbox
 ```
 
+Drive eşitlemesi otomatik değildir. Kullanıcının açık talimatından sonra seçici
+olarak şu komutlar kullanılır:
+
+```bash
+export TRADING_OS_DRIVE_ROOT="/Users/scm/Drive'ım/Trading OS"
+python3 -m trading_os_bridge sync-pull
+python3 -m trading_os_bridge claim MESSAGE_UUID
+python3 -m trading_os_bridge sync-push
+python3 -m trading_os_bridge recover MESSAGE_UUID
+python3 -m trading_os_bridge check
+```
+
+`send`, `ingest`, `list` ve `status` yerel işlemler için korunur. `claim`, bir
+mesajın aynı anda iki uygulayıcı tarafından çalıştırılmasını önler; `recover`
+yalnız kullanıcı talimatıyla yarım kalmış veya süresi dolmuş sahipliği kurtarır.
+Geçersiz ve bütünlüğü bozuk zarflar çalıştırılmaz, karantinaya alınır.
+
 ## Temel belgeler
 
 - [Sistem mimarisi](docs/architecture.md)
@@ -36,6 +54,10 @@ python3 -m trading_os_bridge ingest var/inbox
 - [Talimatla çalışan Drive–Codex köprüsü](docs/automation-runbook.md)
 
 `sources/` klasörü ChatGPT projesinden eşlenen salt okunur kaynaktır; değiştirilmez.
+
+Kod ve `.git` Drive içinde tutulmaz. Drive yalnız iletişim zarfları, karar kaynağı,
+raporlar ve paylaşılacak çıktılar için kullanılır. Yeni Markdown varsayılan olarak
+açılmaz; TOS-DEC-004 istisnası ve merkezi fihrist kaydı birlikte gerekir.
 
 ## BTCUSDT tarihsel veri katmanı
 

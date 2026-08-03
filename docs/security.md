@@ -8,3 +8,22 @@
 - AI bileşeni canlı emir gönderemez, risk limiti yükseltemez ve sistemi kendi başına canlı moda alamaz.
 - Yanlışlıkla sır kaydedilirse yalnız dosyayı silmek yeterli değildir; sır derhal iptal edilip yenilenir.
 
+## Yerel sırlar
+
+- Sırlar yalnız `/Users/scm/Projects/trading-os` çalışma alanındaki Git dışı
+  `.env` veya işletim sistemi sır deposunda tutulur; Drive altındaki hiçbir kopyaya
+  yazılmaz.
+- `.env` dosyası yalnız sahibi tarafından okunabilir olmalı; uygulama gevşek dosya
+  izninde güvenli biçimde durmalıdır.
+- Hata mesajları ve iletişim zarfları sır değerini yankılamaz.
+
+## Dosya yolu ve bütünlük koruması
+
+- Gelen zarfın adı güvenli bir temel ad olmalı; `..`, mutlak yol, sembolik bağlantı
+  kaçışı ve izin verilen kökün dışına çözümleme reddedilir.
+- Drive kökü `TRADING_OS_DRIVE_ROOT` ile açıkça verilir ve işlem öncesi gerçek yolu
+  doğrulanır.
+- Artefakt SHA-256 özeti varsa kullanım öncesi yeniden hesaplanır. Aynı mesaj UUID'si
+  farklı içerik özetiyle gelirse tekrar değil `integrity_conflict` sayılır ve
+  karantinaya alınır.
+- Tamamlanmış veya karantinadaki özgün zarf denetim kanıtıdır; sessizce değiştirilmez.

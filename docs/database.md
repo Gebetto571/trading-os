@@ -12,7 +12,8 @@ Varsayılan çalışma dosyası `var/trading_os.db` konumundadır ve Git'e girme
 
 - `messages`: Mesaj zarfı, yönü, durumu ve ilişki kimliği.
 - `artifacts`: Mesaj veya kararla bağlantılı dosyaların konumu ve özeti.
-- `decisions`: Kabul edilmiş mimari/ürün kararları ve sürümleri.
+- `decisions`: Kabul edilmiş mimari/ürün kararlarının değişmez sürümleri;
+  mantıksal karar kimliği tek başına birincil anahtar değildir.
 - `sync_runs`: Drive alma/gönderme denemelerinin denetim izi.
 - `schema_migrations`: Uygulanmış şema sürümleri.
 
@@ -26,3 +27,20 @@ Varsayılan çalışma dosyası `var/trading_os.db` konumundadır ve Git'e girme
 6. Migration dosyası yayımlandıktan sonra değiştirilmez; yeni numaralı migration eklenir.
 7. Canlı piyasa olayı, emir, fill, pozisyon ve muhasebe tabloları ayrı işlem veritabanında tasarlanacaktır.
 
+## Migration 002 — köprü bütünlüğü ve karar sürümleme
+
+`migrations/002_bridge_integrity.sql`, yayımlanmış `001_initial.sql` dosyasını
+değiştirmeden aşağıdaki düzeltmeleri uygular:
+
+- karar kimliği ile sürümü birlikte benzersiz yapar; aynı kararın yeni sürümü
+  önceki satırı ezmeden saklanır,
+- mesaj içeriği özetini tutarak aynı UUID + aynı içerik tekrarını, aynı UUID +
+  farklı içerik bütünlük çatışmasından ayırır,
+- `claim` sahibini, alınma/sona erme zamanını ve deneme sayısını kaydeder,
+- durum geçişlerini ve kullanıcı talimatlı kurtarma çalışmalarını denetlenebilir
+  hâle getirir,
+- geçersiz zarfların karantina gerekçesini ve eşitleme çalışmasının sonucunu
+  saklar.
+
+Migration uygulanmadan yeni bütünlük ve sahiplik özellikleri hazır kabul edilmez.
+Uygulanan sürüm `schema_migrations` tablosundan doğrulanır.

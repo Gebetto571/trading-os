@@ -1,5 +1,26 @@
 # Güncel durum — 2026-08-03
 
+## Yerleşim ve yönetişim
+
+Ana yerel Git deposunun `/Users/scm/Projects/trading-os` konumunda olduğu,
+`main` dalının `origin/main` izlediği ve eski
+`/Users/scm/Drive'ım/Trading OS/07_KOD/trading-os` çalışma kopyasının bulunmadığı
+2026-08-03 tarihinde yerel olarak doğrulanmıştır. Drive bundan sonra yalnız
+iletişim, karar, rapor ve paylaşım katmanıdır.
+
+TOS-DEC-003, ilk iletişim modeli için tarihsel başvuru durumundadır; ayrı Markdown
+olay dosyası üretme hükümleri TOS-DEC-004 tarafından geçersiz kılınmıştır. Mevcut
+yaşayan kayıt ve merkezi fihrist önceliklidir.
+
+## Köprü durumu
+
+Köprünün hedef sözleşmesi kullanıcı talimatlı `sync-pull`, `claim`, `recover` ve
+`sync-push`; tam zarf doğrulaması, içerik özeti, süreli sahiplik, karantina ve
+karar sürümlemesidir. Bunların üretime hazır sayılması için CLI davranışları,
+`migrations/002_bridge_integrity.sql` uygulaması ve uçtan uca Drive deneyi ayrıca
+doğrulanmalıdır. Bu belge yalnız hedefi kaydeder; doğrulanmamış kod sonucunu
+tamamlanmış ilan etmez.
+
 BTCUSDT spot 1m veri katmanı `crates/market-data` altında uygulanmıştır. Rust format,
 Clippy ve 20 otomatik test geçmektedir. Günlük ve 2024 Ocak gerçek Binance verileri
 yerel PostgreSQL/Parquet katmanına aktarılmış; eksik ve mükerrer kayıt bulunmamıştır.
