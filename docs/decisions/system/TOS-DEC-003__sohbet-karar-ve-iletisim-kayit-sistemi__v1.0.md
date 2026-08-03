@@ -44,7 +44,7 @@ zarfı ve yerel veritabanı olayını tercih eder.
 ## 3. Tarihsel klasör yerleşimi
 
 Kaldırılan bulut eşitleme modelinin klasör ayrıntıları yalnız Git geçmişinde
-korunur; yeni kayıtlarda kullanılmaz. Güncel kalıcı konum yerel Git ve private
+korunur; yeni kayıtlarda kullanılmaz. Güncel kalıcı konum yerel Git ve public
 GitHub karşılığıdır.
 
 ## 4. Kayıt türleri

@@ -29,8 +29,8 @@ teslim eder.
 
 | Bilgi | Ana kaynak |
 |---|---|
-| Kabul edilmiş kararlar | Yerel Git `docs/decisions/` ve private GitHub karşılığı |
-| Kod ve teknik belge geçmişi | Private GitHub `Gebetto571/trading-os` |
+| Kabul edilmiş kararlar | Yerel Git `docs/decisions/` ve public GitHub karşılığı |
+| Kod ve teknik belge geçmişi | Public GitHub `Gebetto571/trading-os` |
 | Sohbetler arası görev aktarımı | Kullanıcının eklediği proje kaynağı veya GitHub issue/commit/PR |
 | Codex sonuç aktarımı | Commit/PR bağlantısı ve kullanıcıya verilen sonuç özeti |
 | Tamamlanmış yerel mesajlar | `var/archive/` |
@@ -87,7 +87,7 @@ GitHub görev bağlantısıyla Codex'e devredeceğim. Sen kodlama yapma.
 
 ```text
 Trading OS proje kaynağındaki yeni kodlama görevini doğrula, uygula, test et
-ve private GitHub deposuna kaydet. Sonucu commit/PR bağlantısı ve kısa doğrulama
+ve public GitHub deposuna kaydet. Sonucu commit/PR bağlantısı ve kısa doğrulama
 özetiyle bana bildir.
 ```
 

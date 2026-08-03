@@ -2,7 +2,7 @@
 id: TOS-DEC-004
 title: Merkezi Dosya Yönetim Anayasası
 status: sealed
-version: 1.5
+version: 1.6
 date: 2026-08-03
 last_updated: 2026-08-03
 authority: project-constitution
@@ -84,7 +84,7 @@ Yeni Markdown dosyasında kısa bir `creation_reason` alanı bulunur ve yukarıd
 ## 7. Konumlandırma
 
 Kod, belgeler ve çalışma verileri yerelde tutulur. Kodla birlikte sürümlenecek
-teknik içerik yerel Git deposunda hazırlanır ve private GitHub deposuna gönderilir:
+teknik içerik yerel Git deposunda hazırlanır ve public GitHub deposuna gönderilir:
 
 `/Users/scm/Projects/trading-os`
 
@@ -191,7 +191,7 @@ satırları günceller. Aynı ilişkiyi göstermek için yeni Markdown dosyası 
 ## 9. Sürüm ve yedekleme kuralı
 
 - Yerel Git deposu izlenen kod ve belgelerin tek çalışma kaynağıdır.
-- Yerel Git deposu ile private GitHub arasındaki teknik geçmişi Git yönetir.
+- Yerel Git deposu ile public GitHub arasındaki teknik geçmişi Git yönetir.
 - Drive eşitlemesi yapılmaz; eski Drive kopyaları güncel kaynağın yerine geçmez.
 - Çakışmada en yeni dosya körlemesine seçilmez; değişiklikler karşılaştırılıp birleştirilir.
 - Sırlar, parolalar, API anahtarları ve kişisel veriler Markdown belgelerine veya Git'e yazılmaz.
@@ -255,7 +255,7 @@ Yeni bir Markdown dosyası oluşturacak sohbet:
    kimliği yalnız `docs-manager` ayırır.
 5. Dosyada `creation_reason`, sahibi, kullanıcıları ve amacı belirtir.
 6. Dosyayı oluşturduğu işlem içinde fihriste yeni satır ekler.
-7. Yerel Git kaydını ve gerekiyorsa private GitHub karşılığını günceller.
+7. Yerel Git kaydını ve gerekiyorsa public GitHub karşılığını günceller.
 8. Dosyanın ve fihrist kaydının erişilebilir olduğunu doğrular.
 
 Fihrist güncellenemiyorsa zorunlu olmayan yeni Markdown dosyası oluşturulmaz. Zorunlu teknik üretimde dosya oluşturulabilir ancak aynı görev tamamlanmadan fihrist kaydı da tamamlanır. Sıradaki sicil numarası metinde sabitlenmez; mevcut en yüksek doğrulanmış `MD-NNN` değerinden seri biçimde hesaplanır.
@@ -277,12 +277,12 @@ Fihrist güncellenemiyorsa zorunlu olmayan yeni Markdown dosyası oluşturulmaz.
 | Sicil | Belge | Kanonik konum | Sahip / kullananlar | Amaç / kapsam | Oluşturma gerekçesi | Yaşam / erişim | Git kanıtı | Tarih | İlişki |
 |---|---|---|---|---|---|---|---|---|---|
 | MD-001 | `BASLANGIC-BURADAN.md` | Tarihsel dış Drive kopyası | docs-manager / all-chats | Eski proje giriş kartı | legacy/pre-constitution | archived / external-legacy | not-applicable | legacy-unknown / 2026-08-03 | replaced by MD-002, MD-021 |
-| MD-002 | `README.md` | Git kökü | codex-dev / all-chats | Yazılım başlangıcı | legacy/pre-constitution | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-020 |
-| MD-003 | `AGENTS.md` | Git kökü | docs-manager / all-chats | Bağlayıcı ajan, ilk rol ve belge yönlendirme talimatı | legacy/pre-constitution | active / main | `main@e963359` | legacy-unknown / 2026-08-03 | MD-007, MD-008, MD-021 |
+| MD-002 | `README.md` | Git kökü | codex-dev / all-chats | Yazılım başlangıcı | legacy/pre-constitution | proposed / branch-only | `docs/canonical-location-public-remote@34c459c` | legacy-unknown / 2026-08-03 | MD-020 |
+| MD-003 | `AGENTS.md` | Git kökü | docs-manager / all-chats | Bağlayıcı ajan, ilk rol ve belge yönlendirme talimatı | legacy/pre-constitution | proposed / branch-only | `docs/canonical-location-public-remote@34c459c` | legacy-unknown / 2026-08-03 | MD-007, MD-008, MD-021 |
 | MD-004 | `TOS-DEC-001__bot-calisma-sistemi-ve-karlilik-disiplini__v0.1.md` | `sources/preview.md` salt okunur yerel kaynak | cloud-planner / cloud-planner,codex-dev | Bot ve kârlılık kararı | legacy/pre-constitution | active / external-sync | `main@983712d` | legacy-unknown / 2026-08-03 | MD-025 |
-| MD-005 | `TOS-DEC-002__bulut-chatgpt-codex-kodlama-is-akisi__v1.0.md` | `docs/decisions/` | docs-manager / cloud-planner,codex-dev | Bulut–Codex akışı | legacy/pre-constitution | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-017, MD-020 |
-| MD-006 | `TOS-DEC-003__sohbet-karar-ve-iletisim-kayit-sistemi__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | Tarihsel iletişim modeli | legacy/pre-constitution | reference / main | `main@0de5589` | legacy-unknown / 2026-08-03 | superseded-in-part by MD-007 |
-| MD-007 | `TOS-DEC-004__merkezi-dosya-yonetim-anayasasi__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | Dosya anayasası, klasör ve sohbet–belge yönlendirmesi ile fihrist | Kullanıcı tarafından merkezi yönetişim istendi | active / main | `main@e963359` | 2026-08-03 / 2026-08-03 | supersedes MD-006,011,012,013 |
+| MD-005 | `TOS-DEC-002__bulut-chatgpt-codex-kodlama-is-akisi__v1.0.md` | `docs/decisions/` | docs-manager / cloud-planner,codex-dev | Bulut–Codex akışı | legacy/pre-constitution | proposed / branch-only | `docs/canonical-location-public-remote@34c459c` | legacy-unknown / 2026-08-03 | MD-017, MD-020 |
+| MD-006 | `TOS-DEC-003__sohbet-karar-ve-iletisim-kayit-sistemi__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | Tarihsel iletişim modeli | legacy/pre-constitution | reference / branch-only | `docs/canonical-location-public-remote@34c459c` | legacy-unknown / 2026-08-03 | superseded-in-part by MD-007 |
+| MD-007 | `TOS-DEC-004__merkezi-dosya-yonetim-anayasasi__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | Dosya anayasası, klasör ve sohbet–belge yönlendirmesi ile fihrist | Kullanıcı tarafından merkezi yönetişim istendi | proposed / branch-only | `docs/canonical-location-public-remote@34c459c` | 2026-08-03 / 2026-08-03 | supersedes MD-006,011,012,013 |
 | MD-008 | `TOS-CHAT-REGISTRY__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | İlk rol kaynağı, sohbet sicili ve ana belge ilişki matrisi | Sohbetler arası izlenebilirlik | active / main | `main@e963359` | 2026-08-03 / 2026-08-03 | MD-003, MD-007, MD-021 |
 | MD-009 | `TOS-CHATDEC-20260803-001__docs-manager__sohbet-iletisim-log-sistemi.md` | `docs/decisions/chats/` | docs-manager / docs-manager,all-chats | Yaşayan docs-manager kaydı | legacy/pre-constitution | active / main | `main@0de5589` | 2026-08-03 / 2026-08-03 | MD-006, MD-007 |
 | MD-010 | `TOS-CHATDEC-20260803-002__codex-dev__btcusdt-veri-katmani.md` | `docs/decisions/chats/` | codex-dev / codex-dev,cloud-planner | BTCUSDT yaşayan kararı | Bağımsız yazılım bileşeni kararı | active / main | `main@983712d` | 2026-08-03 / 2026-08-03 | MD-015, MD-024 |
@@ -293,12 +293,12 @@ Fihrist güncellenemiyorsa zorunlu olmayan yeni Markdown dosyası oluşturulmaz.
 | MD-015 | `market-data.md` | `docs/architecture/` | codex-dev / cloud-planner,codex-dev | Piyasa verisi mimarisi | Bağımsız yazılım bileşeni | active / main | `main@3d5f0bc` | 2026-08-03 / 2026-08-03 | MD-010, MD-024 |
 | MD-016 | `database.md` | `docs/` | codex-dev / cloud-planner,codex-dev | Veritabanı tasarımı | Bağımsız teknik ana belge | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-014, MD-020 |
 | MD-017 | `communication-protocol.md` | `docs/` | docs-manager / all-chats | Bulut–Codex kullanıcı devir protokolü | Bağımsız iletişim sözleşmesi | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-005, MD-020 |
-| MD-018 | `operations.md` | `docs/` | codex-dev / docs-manager,codex-dev | İşletim kuralları | Bağımsız operasyon belgesi | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-002, MD-020 |
+| MD-018 | `operations.md` | `docs/` | codex-dev / docs-manager,codex-dev | İşletim kuralları | Bağımsız operasyon belgesi | proposed / branch-only | `docs/canonical-location-public-remote@34c459c` | legacy-unknown / 2026-08-03 | MD-002, MD-020 |
 | MD-019 | `talimatla-calisan-drive-codex-koprusu.md` | Tarihsel dış Drive kopyası | docs-manager / cloud-planner,codex-dev | Eski Drive köprüsü açıklaması | legacy/pre-constitution | archived / external-legacy | not-applicable | legacy-unknown / 2026-08-03 | replaced by MD-020 |
 | MD-020 | `automation-runbook.md` | `docs/` | codex-dev / docs-manager,codex-dev | Köprü işletim rehberi | Bağımsız operasyon akışı | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-017, MD-018 |
-| MD-021 | `cloud-control.md` | `docs/` | docs-manager / all-chats | Yeni sohbet başlangıç talimatı ve Codex görev kartı | Bulut sohbet çalışma kartı | active / main | `main@e963359` | legacy-unknown / 2026-08-03 | MD-001, MD-003, MD-007, MD-008, MD-017 |
-| MD-022 | `security.md` | `docs/` | codex-dev / all-chats | Güvenlik politikası | Ayrı güvenlik sorumluluğu | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-003, MD-020 |
-| MD-023 | `CURRENT.md` | `docs/status/` | codex-dev / all-chats | Tekil güncel durum | Yaşayan durum kaydı | active / main | `main@3d5f0bc` | 2026-08-03 / 2026-08-03 | MD-024 |
+| MD-021 | `cloud-control.md` | `docs/` | docs-manager / all-chats | Yeni sohbet başlangıç talimatı ve Codex görev kartı | Bulut sohbet çalışma kartı | proposed / branch-only | `docs/canonical-location-public-remote@34c459c` | legacy-unknown / 2026-08-03 | MD-001, MD-003, MD-007, MD-008, MD-017 |
+| MD-022 | `security.md` | `docs/` | codex-dev / all-chats | Güvenlik politikası | Ayrı güvenlik sorumluluğu | proposed / branch-only | `docs/canonical-location-public-remote@34c459c` | legacy-unknown / 2026-08-03 | MD-003, MD-020 |
+| MD-023 | `CURRENT.md` | `docs/status/` | codex-dev / all-chats | Tekil güncel durum | Yaşayan durum kaydı | proposed / branch-only | `docs/canonical-location-public-remote@34c459c` | 2026-08-03 / 2026-08-03 | MD-024 |
 | MD-024 | `2026-08-03-btcusdt-data-integrity.md` | `docs/reports/` | codex-dev / cloud-planner,codex-dev | BTCUSDT bütünlük kanıtı | Bağımsız doğrulama raporu | active / main | `main@3d5f0bc` | 2026-08-03 / 2026-08-03 | MD-010, MD-015, MD-023 |
 | MD-025 | `sources/` Markdown grubu | `sources/` | external-sync / all-chats | Salt okunur kaynak aynası | Dış sistem eşitlemesi | reference / external-sync | `main@983712d` | legacy-unknown / 2026-08-03 | MD-004 |
 
@@ -313,12 +313,13 @@ Değişiklik için:
 1. Kullanıcı açıkça anayasa değişikliği ister.
 2. Değişiklik aynı dosyada yapılır; sırf yeni sürüm için ayrı Markdown dosyası açılmaz.
 3. Aşağıdaki geçmişe tarih, sürüm ve kısa gerekçe eklenir.
-4. Yerel Git değişikliği doğrulanır ve private GitHub geçmişine gönderilir.
+4. Yerel Git değişikliği doğrulanır ve public GitHub geçmişine gönderilir.
 
 ## 14. Değişiklik geçmişi
 
 | Tarih | Sürüm | Değişiklik | Onay |
 |---|---:|---|---|
+| 2026-08-03 | 1.6 | Kanonik yerel depo yolu yeniden doğrulandı; eski Drive yolları geçersiz, GitHub deposunun güncel görünürlüğü public olarak mühürlendi. | Kullanıcı talimatı ve canlı doğrulama |
 | 2026-08-03 | 1.5 | Mevcut sohbetlerin ilk mesajındaki rolün esas olduğu ve sohbet–ana belge ilişkilerinin merkezi sicilde tutulacağı mühürlendi. | Kullanıcı talimatı |
 | 2026-08-03 | 1.4 | Kanonik klasör yönlendirme tablosu ve diğer sohbetlerin rol-temelli dosya teslim sözleşmesi mühürlendi. | Kullanıcı talimatı |
 | 2026-08-03 | 1.3 | Drive depolama ve eşitleme katmanı kaldırıldı; tüm çalışma dosyaları lokal, izlenen kod ve belgelerin uzak yedeği private GitHub olarak mühürlendi. | Kullanıcı talimatı |

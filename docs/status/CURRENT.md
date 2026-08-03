@@ -53,6 +53,6 @@ eşzamanlılığı yapılandırılabilir yapılmış, başarılı fallback kayı
 Fiziksel olarak ayrı yedek hedefi henüz bağlı değildir. Doğrulanmış yerel yedek bu
 hedef bağlanana kadar korunur; Drive veri yedeği olarak kullanılmaz.
 
-GitHub deposu özel kalmıştır ve PR birleşince çalışma dallarını otomatik silme ayarı
-açılmıştır. Mevcut GitHub planı özel depoda ana dal koruma kuralını desteklemediği
-için kalite kapısı PR iş akışı ve işletim disipliniyle uygulanır.
+GitHub deposu kullanıcı onayıyla public yapılmıştır. PR birleşince çalışma dallarını
+otomatik silme ayarı açıktır. `main` koruması doğrudan birleştirmeyi engeller; zorunlu
+kalite kapısı geçmeden PR birleştirilemez.
