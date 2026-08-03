@@ -14,7 +14,8 @@ Varsayılan çalışma dosyası `var/trading_os.db` konumundadır ve Git'e girme
 - `artifacts`: Mesaj veya kararla bağlantılı dosyaların konumu ve özeti.
 - `decisions`: Kabul edilmiş mimari/ürün kararlarının değişmez sürümleri;
   mantıksal karar kimliği tek başına birincil anahtar değildir.
-- `sync_runs`: Drive alma/gönderme denemelerinin denetim izi.
+- `sync_runs`: Tarihsel eşitleme şeması; yeni mimaride yerel içe/dışa aktarma
+  çalışmalarının denetim izi olarak korunur.
 - `schema_migrations`: Uygulanmış şema sürümleri.
 
 ## Yazma ilkeleri

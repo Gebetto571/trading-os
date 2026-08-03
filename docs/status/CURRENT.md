@@ -4,9 +4,8 @@
 
 Ana yerel Git deposunun `/Users/scm/Projects/trading-os` konumunda olduğu,
 `main` dalının `origin/main` izlediği ve eski
-`/Users/scm/Drive'ım/Trading OS/07_KOD/trading-os` çalışma kopyasının bulunmadığı
-2026-08-03 tarihinde yerel olarak doğrulanmıştır. Drive bundan sonra yalnız
-iletişim, karar, rapor ve paylaşım katmanıdır.
+2026-08-03 tarihinde yerel olarak doğrulanmıştır. Çalışma dosyaları tamamen
+lokaldir; sürüm ve uzak yedek GitHub'dadır.
 
 TOS-DEC-003, ilk iletişim modeli için tarihsel başvuru durumundadır; ayrı Markdown
 olay dosyası üretme hükümleri TOS-DEC-004 tarafından geçersiz kılınmıştır. Mevcut
@@ -14,11 +13,11 @@ yaşayan kayıt ve merkezi fihrist önceliklidir.
 
 ## Köprü durumu
 
-Köprünün hedef sözleşmesi kullanıcı talimatlı `sync-pull`, `claim`, `recover` ve
-`sync-push`; tam zarf doğrulaması, içerik özeti, süreli sahiplik, karantina ve
-karar sürümlemesidir. Bunların üretime hazır sayılması için CLI davranışları,
-`migrations/002_bridge_integrity.sql` uygulaması ve uçtan uca Drive deneyi ayrıca
-doğrulanmalıdır. Bu belge yalnız hedefi kaydeder; doğrulanmamış kod sonucunu
+Köprünün hedef sözleşmesi kullanıcı talimatlı proje kaynağı/GitHub devri;
+yerel `claim` ve `recover`; tam zarf doğrulaması, içerik özeti, süreli sahiplik,
+karantina ve karar sürümlemesidir. Bunların üretime hazır sayılması için CLI
+davranışları, `migrations/002_bridge_integrity.sql` uygulaması ve uçtan uca yerel
+devir deneyi ayrıca doğrulanmalıdır. Bu belge yalnız hedefi kaydeder; doğrulanmamış kod sonucunu
 tamamlanmış ilan etmez.
 
 BTCUSDT spot 1m veri katmanı `crates/market-data` altında uygulanmıştır. Rust format,

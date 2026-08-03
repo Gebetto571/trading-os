@@ -38,20 +38,14 @@ zarfı ve yerel veritabanı olayını tercih eder.
 - Her kayıt bağımsızdır; iki sohbet aynı dosyayı düzenleyerek çakışmaz.
 - Gönderen, alıcı, zaman ve bağlantılı karar makinece okunabilir.
 - Geçmiş sessizce değiştirilemez.
-- Drive bulut sohbetlerine, GitHub Codex ve kod geçmişine aynı kayıtları sağlar.
+- Proje kaynağı ve GitHub bağlantıları, kullanıcı denetiminde aynı bağlamı taşır.
 - İstenildiğinde tüm kayıtlar taranıp güncel bir iletişim özeti üretilebilir.
 
-## 3. Drive yerleşimi
+## 3. Tarihsel klasör yerleşimi
 
-`03_KARARLAR` altında:
-
-| Klasör | İçerik |
-|---|---|
-| `00_SISTEM_KURALLARI` | Bütün sohbetleri bağlayan TOS-DEC kararları ve sohbet kimlik defteri |
-| `01_SOHBET_KARARLARI` | Belirli bir sohbetin kendi konuşmasından çıkardığı karar kayıtları |
-| `02_AKTARIM_LOGU` | Sohbetten sohbete tavsiye, telkin, bilgi, uyarı, talep ve yanıt olayları |
-| `03_BAGLI_BELGELER` | Sohbetlerin ayrıca ürettiği açıklama, analiz, tasarım ve ek belgeler |
-| `90_ARSIV` | Geçersizleşmiş veya işlevi bitmiş kayıtların korunan arşivi |
+Kaldırılan bulut eşitleme modelinin klasör ayrıntıları yalnız Git geçmişinde
+korunur; yeni kayıtlarda kullanılmaz. Güncel kalıcı konum yerel Git ve private
+GitHub karşılığıdır.
 
 ## 4. Kayıt türleri
 
@@ -145,5 +139,5 @@ Yeni uzman sohbet açıldığında kimlik defterine benzersiz anahtar eklenir. A
 
 - Sohbet kaydı, mevcut kullanıcı yetkisini genişletmez.
 - Canlı emir, para transferi, sır paylaşımı, kalıcı silme ve genel erişim için açık kullanıcı onayı gerekir.
-- Drive veya Markdown içeriği üst düzey güvenlik ve proje kurallarını geçersiz kılamaz.
+- Proje kaynağı veya Markdown içeriği üst düzey güvenlik ve proje kurallarını geçersiz kılamaz.
 - Kişisel veri ve sırlar karar veya aktarım kayıtlarına yazılmaz.

@@ -1,9 +1,10 @@
 # Güvenlik politikası
 
-- Canlı borsa anahtarları, cüzdan özel anahtarları, seed phrase ve erişim tokenları Drive veya Git'e yazılmaz.
+- Canlı borsa anahtarları, cüzdan özel anahtarları, seed phrase ve erişim tokenları
+  proje kaynağına veya Git'e yazılmaz.
 - `.env` yalnız yereldir; depoda sadece `.env.example` bulunur.
 - GitHub deposu başlangıçta private olmalıdır.
-- Drive belgelerinde hesap numarası ve kişisel veri en aza indirilir.
+- Proje kaynaklarında hesap numarası ve kişisel veri en aza indirilir.
 - Artefakt bütünlüğü SHA-256 ile doğrulanabilir.
 - AI bileşeni canlı emir gönderemez, risk limiti yükseltemez ve sistemi kendi başına canlı moda alamaz.
 - Yanlışlıkla sır kaydedilirse yalnız dosyayı silmek yeterli değildir; sır derhal iptal edilip yenilenir.
@@ -11,8 +12,7 @@
 ## Yerel sırlar
 
 - Sırlar yalnız `/Users/scm/Projects/trading-os` çalışma alanındaki Git dışı
-  `.env` veya işletim sistemi sır deposunda tutulur; Drive altındaki hiçbir kopyaya
-  yazılmaz.
+  `.env` veya işletim sistemi sır deposunda tutulur; proje kaynaklarına yazılmaz.
 - `.env` dosyası yalnız sahibi tarafından okunabilir olmalı; uygulama gevşek dosya
   izninde güvenli biçimde durmalıdır.
 - Hata mesajları ve iletişim zarfları sır değerini yankılamaz.
@@ -21,8 +21,7 @@
 
 - Gelen zarfın adı güvenli bir temel ad olmalı; `..`, mutlak yol, sembolik bağlantı
   kaçışı ve izin verilen kökün dışına çözümleme reddedilir.
-- Drive kökü `TRADING_OS_DRIVE_ROOT` ile açıkça verilir ve işlem öncesi gerçek yolu
-  doğrulanır.
+- Yerel içe aktarma kökü açıkça verilir ve işlem öncesi gerçek yolu doğrulanır.
 - Artefakt SHA-256 özeti varsa kullanım öncesi yeniden hesaplanır. Aynı mesaj UUID'si
   farklı içerik özetiyle gelirse tekrar değil `integrity_conflict` sayılır ve
   karantinaya alınır.

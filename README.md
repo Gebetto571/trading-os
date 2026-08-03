@@ -2,11 +2,10 @@
 
 Trading OS; araştırma, risk, yürütme ve yapay zekâ destekli denetim bileşenlerini sade ve izlenebilir bir çalışma düzeninde birleştirir.
 
-Bu depo üç katmanlıdır:
+Bu depo iki kalıcı katmanlıdır:
 
 - **Yerel çalışma alanı:** `/Users/scm/Projects/trading-os`; kod, testler, SQLite
   kayıtları ve hızlı geliştirme burada tutulur.
-- **Google Drive:** ChatGPT bulut sohbetleri ile Codex arasında kontrollü mesaj ve belge aktarımı.
 - **GitHub:** Kodun ve kalıcı teknik belgelerin sürüm geçmişi ve uzak yedeği.
 
 Private GitHub deposu: <https://github.com/Gebetto571/trading-os>
@@ -21,20 +20,19 @@ python3 -m trading_os_bridge send --to chatgpt --subject "İlk görev" --body "M
 python3 -m trading_os_bridge list
 ```
 
-Üretilen aktarım dosyaları `var/outbox/` altında oluşur. Drive'a gelen dosyalar `var/inbox/` içine konup şu komutla kayda alınır:
+Kullanıcının proje kaynağına eklediği JSON görev zarfları `var/inbox/` içine
+alındıktan sonra şu komutla yerel kayda işlenebilir:
 
 ```bash
 python3 -m trading_os_bridge ingest var/inbox
 ```
 
-Drive eşitlemesi otomatik değildir. Kullanıcının açık talimatından sonra seçici
-olarak şu komutlar kullanılır:
+Sohbetler arası aktarım kendiliğinden çalışmaz. Kullanıcı görev metnini proje
+kaynağına ekler veya GitHub issue/commit/PR bağlantısını Codex'e verir. Yerel
+işleme için şu komutlar kullanılır:
 
 ```bash
-export TRADING_OS_DRIVE_ROOT="/Users/scm/Drive'ım/Trading OS"
-python3 -m trading_os_bridge sync-pull
 python3 -m trading_os_bridge claim MESSAGE_UUID
-python3 -m trading_os_bridge sync-push
 python3 -m trading_os_bridge recover MESSAGE_UUID
 python3 -m trading_os_bridge check
 ```
@@ -49,15 +47,15 @@ Geçersiz ve bütünlüğü bozuk zarflar çalıştırılmaz, karantinaya alın�
 - [Sistem mimarisi](docs/architecture.md)
 - [ChatGPT ↔ Codex iletişim protokolü](docs/communication-protocol.md)
 - [Veritabanı tasarımı](docs/database.md)
-- [Drive, Git ve GitHub çalışma düzeni](docs/operations.md)
+- [Yerel Git ve GitHub çalışma düzeni](docs/operations.md)
 - [Güvenlik politikası](docs/security.md)
-- [Talimatla çalışan Drive–Codex köprüsü](docs/automation-runbook.md)
+- [Talimatla çalışan bulut sohbet–Codex devri](docs/automation-runbook.md)
 
 `sources/` klasörü ChatGPT projesinden eşlenen salt okunur kaynaktır; değiştirilmez.
 
-Kod ve `.git` Drive içinde tutulmaz. Drive yalnız iletişim zarfları, karar kaynağı,
-raporlar ve paylaşılacak çıktılar için kullanılır. Yeni Markdown varsayılan olarak
-açılmaz; TOS-DEC-004 istisnası ve merkezi fihrist kaydı birlikte gerekir.
+Kod, belgeler ve çalışma dosyaları lokaldir; sürüm ve uzak yedek GitHub'dadır.
+Yeni Markdown varsayılan olarak açılmaz; TOS-DEC-004 istisnası ve merkezi fihrist
+kaydı birlikte gerekir.
 
 ## BTCUSDT tarihsel veri katmanı
 
