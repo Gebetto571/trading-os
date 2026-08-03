@@ -22,8 +22,9 @@ planda zamanlanmış veya periyodik kontrol yapılmaz.
    ve proje Git politikasına göre kaydedilir.
 7. Sonuç aynı `correlation_id` ile yerel kayda yazılır; commit/PR bağlantısı ve
    doğrulama özeti kullanıcıya teslim edilir.
-8. Başarılı giriş, durum `completed` olarak kalıcılaştırıldıktan sonra yerel
-   arşive taşınır. Hata `failed` olur; özgün zarf kanıt olarak korunur.
+8. Doğrulanıp SQLite'a alınan özgün zarf tekrar çalıştırılmaması için yerel ham
+   arşive taşınır; işin `received`, `processing`, `completed` veya `failed` durumu
+   veritabanında izlenir. Hatalı zarf karantinada kanıt olarak korunur.
 
 ## Otomatik yürütme sınırı
 
@@ -56,9 +57,9 @@ Bu durumlarda Codex görevi uygulamak yerine `status` türünde `approval_requir
 ## Komut eşlemesi
 
 ```text
-claim      Tek bir mesaj için süreli işlem sahipliği alır
-recover    Süresi dolmuş/yarım kalmış sahipliği kullanıcı talimatıyla kurtarır
-check      Şema, bütünlük ve yerleşim kontrollerini salt okunur çalıştırır
+claim      Sıradaki alınmış mesaj için süreli işlem sahipliği alır
+recover    Belirtilen veya süresi dolmuş sahipliği kullanıcı talimatıyla kurtarır
+check      Belirtilen UUID'nin yerel kaydını salt okunur gösterir
 ```
 
 Mevcut `send`, `ingest`, `list` ve `status` komutları yerel zarf üretme, içe alma
@@ -67,6 +68,7 @@ taraması başlatmaz.
 
 ## Yerel arşiv ve karantina sınırı
 
-- Tamamlanmış iletişim zarfları yerel `var/archive/` altında tutulur.
+- Doğrulanıp yerel kayda alınan özgün zarflar `var/archive/` altında tutulur;
+  işlem durumu SQLite'ta izlenir.
 - Karantina, arşiv değildir. Şema/bütünlük sorunu çözülmeden dosya tamamlanmış
   kabul edilmez ve ikinci kez çalıştırılmaz.

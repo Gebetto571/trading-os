@@ -16,7 +16,7 @@ Python 3.11 veya daha yeni bir sürüm yeterlidir; harici paket gerekmez.
 
 ```bash
 python3 -m trading_os_bridge init
-python3 -m trading_os_bridge send --to chatgpt --subject "İlk görev" --body "Mimariyi değerlendir"
+python3 -m trading_os_bridge send --to cloud-planner --subject "İlk görev" --body "Mimariyi değerlendir"
 python3 -m trading_os_bridge list
 ```
 
@@ -32,9 +32,9 @@ kaynağına ekler veya GitHub issue/commit/PR bağlantısını Codex'e verir. Ye
 işleme için şu komutlar kullanılır:
 
 ```bash
-python3 -m trading_os_bridge claim MESSAGE_UUID
-python3 -m trading_os_bridge recover MESSAGE_UUID
-python3 -m trading_os_bridge check
+python3 -m trading_os_bridge claim --worker codex-dev
+python3 -m trading_os_bridge recover --id MESSAGE_UUID
+python3 -m trading_os_bridge check MESSAGE_UUID
 ```
 
 `send`, `ingest`, `list` ve `status` yerel işlemler için korunur. `claim`, bir

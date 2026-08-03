@@ -14,8 +14,8 @@ Varsayılan çalışma dosyası `var/trading_os.db` konumundadır ve Git'e girme
 - `artifacts`: Mesaj veya kararla bağlantılı dosyaların konumu ve özeti.
 - `decisions`: Kabul edilmiş mimari/ürün kararlarının değişmez sürümleri;
   mantıksal karar kimliği tek başına birincil anahtar değildir.
-- `sync_runs`: Tarihsel eşitleme şeması; yeni mimaride yerel içe/dışa aktarma
-  çalışmalarının denetim izi olarak korunur.
+- `sync_runs`: İlk Drive tasarımından kalan kullanılmayan uyumluluk tablosu; yeni
+  kod bu tabloya yazmaz.
 - `schema_migrations`: Uygulanmış şema sürümleri.
 
 ## Yazma ilkeleri
@@ -40,8 +40,18 @@ değiştirmeden aşağıdaki düzeltmeleri uygular:
 - `claim` sahibini, alınma/sona erme zamanını ve deneme sayısını kaydeder,
 - durum geçişlerini ve kullanıcı talimatlı kurtarma çalışmalarını denetlenebilir
   hâle getirir,
-- geçersiz zarfların karantina gerekçesini ve eşitleme çalışmasının sonucunu
-  saklar.
+- geçersiz veya bütünlüğü bozuk zarflar için karantina alanlarını sağlar.
 
 Migration uygulanmadan yeni bütünlük ve sahiplik özellikleri hazır kabul edilmez.
 Uygulanan sürüm `schema_migrations` tablosundan doğrulanır.
+
+## Piyasa verisi PostgreSQL'i
+
+Mum verisi iletişim SQLite'ından ayrıdır. Ham dosyalar yerel `data/` altında,
+PostgreSQL 16 verisi `trading-os_trading_os_market_data` adlı Docker volume'ünde
+tutulur; ikisi de Git ve GitHub dışındadır. Drive kullanılmaz.
+
+Kalıcı yedekler depo dışında `/Users/scm/Projects/trading-os-backups/` altında
+özel PostgreSQL arşiv biçiminde tutulur. Yedek tamamlandığında `pg_restore -l`
+ile katalog okunabilirliği, SHA-256 özeti ve yalnız kullanıcı erişimli dosya izni
+doğrulanır.

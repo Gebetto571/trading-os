@@ -34,7 +34,7 @@ class GovernanceTests(unittest.TestCase):
         registry_text = REGISTRY.read_text(encoding="utf-8")
         roles = set(re.findall(r"^\| `([^`]+)` \|", registry_text, flags=re.MULTILINE))
         lifecycles = {"proposed", "active", "reference", "superseded", "archived", "generated"}
-        availability = {"branch-only", "main", "drive-only", "drive+main", "external-sync"}
+        availability = {"branch-only", "main", "external-sync", "external-legacy"}
         for row in index_rows():
             owner = row[3].split("/", 1)[0].strip()
             lifecycle, location = [part.strip() for part in row[6].split("/", 1)]
@@ -66,6 +66,15 @@ class GovernanceTests(unittest.TestCase):
         self.assertIn("tek yazar", agents)
         self.assertNotIn("/Users/scm/Drive'ım/Trading OS/07_KOD/trading-os", constitution)
         self.assertNotIn("/Users/scm/Drive'ım/Trading OS/07_KOD/trading-os", agents)
+        self.assertIn("Google Drive is not a project storage or synchronization layer", agents)
+
+    def test_drive_sync_runtime_is_removed(self) -> None:
+        self.assertFalse((ROOT / "config/drive-folders.json").exists())
+        self.assertFalse((ROOT / "trading_os_bridge/drive.py").exists())
+        self.assertFalse((ROOT / "bin/tos-git").exists())
+        parser_source = (ROOT / "trading_os_bridge/cli.py").read_text(encoding="utf-8")
+        self.assertNotIn("sync-pull", parser_source)
+        self.assertNotIn("sync-push", parser_source)
 
     def test_historical_event_documents_are_not_active_policy(self) -> None:
         dec3 = (ROOT / "docs/decisions/system/TOS-DEC-003__sohbet-karar-ve-iletisim-kayit-sistemi__v1.0.md")

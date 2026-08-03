@@ -1,6 +1,0 @@
-#!/usr/bin/env sh
-set -eu
-
-PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-exec git --git-dir="$PROJECT_ROOT/.local-git" --work-tree="$PROJECT_ROOT" "$@"
-
