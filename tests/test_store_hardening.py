@@ -47,6 +47,8 @@ class StoreHardeningTests(unittest.TestCase):
         self.store.put_message(item, "inbound", "received")
         with self.assertRaises(InvalidTransition):
             self.store.update_status(item["id"], "completed")
+        with self.assertRaises(InvalidTransition):
+            self.store.update_status(item["id"], "processing")
         claimed = self.store.claim_message("worker", 30)
         self.assertEqual(claimed["status"], "processing")
         self.assertTrue(self.store.update_status(item["id"], "failed", "boom"))

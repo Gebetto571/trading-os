@@ -22,7 +22,8 @@ class InvalidTransition(ValueError):
 
 TRANSITIONS = {
     "queued": {"received", "processing", "failed"},
-    "received": {"processing", "failed"},
+    # received -> processing yalnız atomik claim_message() üzerinden yapılır.
+    "received": {"failed"},
     "processing": {"completed", "failed"},
     "completed": set(),
     "failed": set(),
