@@ -2,10 +2,10 @@
 
 Trading OS; araştırma, risk, yürütme ve yapay zekâ destekli denetim bileşenlerini sade ve izlenebilir bir çalışma düzeninde birleştirir.
 
-Bu depo üç katmanlıdır:
+Bu depo iki kalıcı katmanlıdır:
 
-- **Yerel çalışma alanı:** Kod, testler, SQLite kayıtları ve hızlı geliştirme.
-- **Google Drive:** ChatGPT bulut sohbetleri ile Codex arasında kontrollü mesaj ve belge aktarımı.
+- **Yerel çalışma alanı:** `/Users/scm/Projects/trading-os`; kod, testler, SQLite
+  kayıtları ve hızlı geliştirme burada tutulur.
 - **GitHub:** Kodun ve kalıcı teknik belgelerin sürüm geçmişi ve uzak yedeği.
 
 Private GitHub deposu: <https://github.com/Gebetto571/trading-os>
@@ -16,26 +16,48 @@ Python 3.11 veya daha yeni bir sürüm yeterlidir; harici paket gerekmez.
 
 ```bash
 python3 -m trading_os_bridge init
-python3 -m trading_os_bridge send --to chatgpt --subject "İlk görev" --body "Mimariyi değerlendir"
+python3 -m trading_os_bridge send --to cloud-planner --subject "İlk görev" --body "Mimariyi değerlendir"
 python3 -m trading_os_bridge list
 ```
 
-Üretilen aktarım dosyaları `var/outbox/` altında oluşur. Drive'a gelen dosyalar `var/inbox/` içine konup şu komutla kayda alınır:
+Kullanıcının proje kaynağına eklediği JSON görev zarfları `var/inbox/` içine
+alındıktan sonra şu komutla yerel kayda işlenebilir:
 
 ```bash
 python3 -m trading_os_bridge ingest var/inbox
 ```
+
+Sohbetler arası aktarım kendiliğinden çalışmaz. Kullanıcı görev metnini proje
+kaynağına ekler veya GitHub issue/commit/PR bağlantısını Codex'e verir. Yerel
+işleme için şu komutlar kullanılır:
+
+```bash
+python3 -m trading_os_bridge claim --worker codex-dev
+python3 -m trading_os_bridge status MESSAGE_UUID completed --worker codex-dev
+python3 -m trading_os_bridge recover --id MESSAGE_UUID
+python3 -m trading_os_bridge check MESSAGE_UUID
+```
+
+`send`, `ingest`, `list` ve `status` yerel işlemler için korunur. `status` yalnız
+claim sahibi ve geçerli süreyle `completed`/`failed` yazabilir. `claim`, bir
+mesajın aynı anda iki uygulayıcı tarafından çalıştırılmasını önler; `recover`
+yalnız kullanıcı talimatıyla yarım kalmış veya süresi dolmuş sahipliği kurtarır.
+Geçersiz ve bütünlüğü bozuk zarflar çalıştırılmaz, karantinaya alınır.
 
 ## Temel belgeler
 
 - [Sistem mimarisi](docs/architecture.md)
 - [ChatGPT ↔ Codex iletişim protokolü](docs/communication-protocol.md)
 - [Veritabanı tasarımı](docs/database.md)
-- [Drive, Git ve GitHub çalışma düzeni](docs/operations.md)
+- [Yerel Git ve GitHub çalışma düzeni](docs/operations.md)
 - [Güvenlik politikası](docs/security.md)
-- [Talimatla çalışan Drive–Codex köprüsü](docs/automation-runbook.md)
+- [Talimatla çalışan bulut sohbet–Codex devri](docs/automation-runbook.md)
 
 `sources/` klasörü ChatGPT projesinden eşlenen salt okunur kaynaktır; değiştirilmez.
+
+Kod, belgeler ve çalışma dosyaları lokaldir; sürüm ve uzak yedek GitHub'dadır.
+Yeni Markdown varsayılan olarak açılmaz; TOS-DEC-004 istisnası ve merkezi fihrist
+kaydı birlikte gerekir.
 
 ## BTCUSDT tarihsel veri katmanı
 

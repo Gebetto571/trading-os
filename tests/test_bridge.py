@@ -35,10 +35,9 @@ class StoreTests(unittest.TestCase):
     def test_migration_is_repeatable(self):
         with tempfile.TemporaryDirectory() as directory:
             store = Store(Path(directory) / "test.db", Path(__file__).parents[1] / "migrations")
-            self.assertEqual(store.migrate(), 1)
+            self.assertEqual(store.migrate(), 3)
             self.assertEqual(store.migrate(), 0)
 
 
 if __name__ == "__main__":
     unittest.main()
-

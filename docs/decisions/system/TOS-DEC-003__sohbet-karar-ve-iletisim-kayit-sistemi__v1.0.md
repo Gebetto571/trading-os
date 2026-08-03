@@ -1,9 +1,10 @@
 ---
 id: TOS-DEC-003
 title: Sohbet Kararları ve Sohbetler Arası İletişim Kayıt Sistemi
-status: accepted
+status: reference
 version: 1.0
 date: 2026-08-03
+superseded_in_part_by: TOS-DEC-004
 language: tr
 scope:
   - all-chats
@@ -15,29 +16,36 @@ scope:
 
 # Sohbet Kararları ve Sohbetler Arası İletişim Kayıt Sistemi
 
+> **Tarihsel başvuru uyarısı:** Bu belge iletişim kimliği, zarf alanları ve
+> izlenebilirlik modeli için başvuru kaynağıdır. Her olay için ayrı Markdown
+> dosyası açılmasını isteyen hükümleri TOS-DEC-004 tarafından geçersiz
+> kılınmıştır. Yeni Markdown ancak TOS-DEC-004 istisnası sağlanır ve merkezi
+> fihrist aynı işlemde güncellenirse oluşturulabilir.
+
 ## 1. Karar
 
-Trading OS içindeki her sohbet; kendi konuşmalarından çıkardığı kalıcı kararları, tavsiyeleri, uyarıları ve paylaşmaya değer bilgileri kimlikli Markdown kayıtlarıyla aktarır. Her aktarım gönderen ve hedef sohbeti açıkça gösteren ayrı bir olay dosyasıdır.
+Trading OS içindeki her sohbet; kendi konuşmalarından çıkardığı kalıcı kararları,
+tavsiyeleri, uyarıları ve paylaşmaya değer bilgileri gönderen ve hedef sohbeti
+açıkça gösteren kimlikli kayıtlarla aktarır. Kayıt, öncelikle ilgili sohbetin
+mevcut yaşayan Markdown belgesine veya JSON iletişim zarfına işlenir; ayrı
+Markdown olay dosyası varsayılan değildir.
 
-## 2. Neden dosya tabanlı olay günlüğü?
+## 2. Tarihsel dosya tabanlı olay günlüğü gerekçesi
+
+Bu bölüm ilk tasarımın gerekçesini korur; güncel uygulama Markdown yerine JSON
+zarfı ve yerel veritabanı olayını tercih eder.
 
 - Her kayıt bağımsızdır; iki sohbet aynı dosyayı düzenleyerek çakışmaz.
 - Gönderen, alıcı, zaman ve bağlantılı karar makinece okunabilir.
 - Geçmiş sessizce değiştirilemez.
-- Drive bulut sohbetlerine, GitHub Codex ve kod geçmişine aynı kayıtları sağlar.
+- Proje kaynağı ve GitHub bağlantıları, kullanıcı denetiminde aynı bağlamı taşır.
 - İstenildiğinde tüm kayıtlar taranıp güncel bir iletişim özeti üretilebilir.
 
-## 3. Drive yerleşimi
+## 3. Tarihsel klasör yerleşimi
 
-`03_KARARLAR` altında:
-
-| Klasör | İçerik |
-|---|---|
-| `00_SISTEM_KURALLARI` | Bütün sohbetleri bağlayan TOS-DEC kararları ve sohbet kimlik defteri |
-| `01_SOHBET_KARARLARI` | Belirli bir sohbetin kendi konuşmasından çıkardığı karar kayıtları |
-| `02_AKTARIM_LOGU` | Sohbetten sohbete tavsiye, telkin, bilgi, uyarı, talep ve yanıt olayları |
-| `03_BAGLI_BELGELER` | Sohbetlerin ayrıca ürettiği açıklama, analiz, tasarım ve ek belgeler |
-| `90_ARSIV` | Geçersizleşmiş veya işlevi bitmiş kayıtların korunan arşivi |
+Kaldırılan bulut eşitleme modelinin klasör ayrıntıları yalnız Git geçmişinde
+korunur; yeni kayıtlarda kullanılmaz. Güncel kalıcı konum yerel Git ve private
+GitHub karşılığıdır.
 
 ## 4. Kayıt türleri
 
@@ -67,7 +75,10 @@ Her sohbet kararı veya aktarım dosyası YAML üst bilgisi taşır:
 - `document_refs`: Ayrı oluşturulan belge bağlantıları
 - `requires_action`: Alıcıdan eylem beklenip beklenmediği
 
-## 6. Dosya adları
+## 6. Tarihsel dosya adları
+
+Aşağıdaki adlar yalnız TOS-DEC-004 istisnasıyla ayrı Markdown oluşturulmasına
+izin verildiğinde kullanılabilir.
 
 Sohbet kararı:
 
@@ -93,11 +104,14 @@ Dosya adlarında küçük ASCII harf, rakam ve tire kullanılır; içerikte Tür
 
 1. Sohbet konuşmadan kalıcı bir karar veya aktarılacak bilgi çıkarır.
 2. Kendi kimliğini ve hedef sohbeti sohbet kimlik defterinden seçer.
-3. Uygun şablonla yeni `.md` kaydı oluşturur.
-4. Kendi kararıysa `01_SOHBET_KARARLARI`, aktarım ise `02_AKTARIM_LOGU` klasörüne koyar.
-5. Uzun analiz veya tasarım gerekiyorsa ayrı belgeyi `03_BAGLI_BELGELER` altında oluşturup `document_refs` ile bağlar.
+3. Önce mevcut yaşayan sohbet/karar belgesini ve merkezi fihristi bulur.
+4. Kendi kararını mevcut yaşayan kayda; aktarımı iletişim zarfına veya mevcut
+   aktarım kaydına işler.
+5. Ancak TOS-DEC-004 istisnası sağlanıyorsa ayrı belge oluşturur; oluşturma
+   gerekçesini ve kullanıcılarını aynı işlemde merkezi fihriste kaydeder.
 6. Alıcı sohbet, kullanıcı talimatıyla logu kontrol eder ve kendisini hedefleyen yeni kayıtları okur.
-7. Kabul, ret, uygulama veya yanıt için yeni bir aktarım kaydı oluşturur; özgün kaydı değiştirmez.
+7. Kabul, ret, uygulama veya yanıtı aynı ilişki zincirinde yeni JSON olayı olarak
+   kaydeder; sırf teyit için yeni Markdown oluşturmaz.
 8. Kod veya kalıcı teknik belge etkileniyorsa GitHub karşılığı güncellenir.
 
 ## 8. Tekrar ve durum kuralı
@@ -106,7 +120,9 @@ Dosya adlarında küçük ASCII harf, rakam ve tire kullanılır; içerikte Tür
 - Bir kaydın son durumu, aynı `correlation_id` zincirindeki en yeni geçerli olaydan hesaplanır.
 - Bir tavsiye `accepted` veya `applied` yanıtı almadan karar sayılmaz.
 - Bir kayıt yanlışsa silinmez; düzeltme kaydıyla `superseded` yapılır.
-- Merkezi log dosyası elle tutulmaz; `02_AKTARIM_LOGU` klasöründeki olay dosyaları logun kendisidir.
+- Markdown fihristi TOS-DEC-004 içinde merkezi olarak tutulur. İletişim olaylarının
+  asıl makine kaydı JSON zarfı ve yerel veritabanıdır; Markdown yalnız kalıcı ve
+  bağımsız belge gereksinimi varsa kullanılır.
 
 ## 9. Sohbet kimliği
 
@@ -123,6 +139,5 @@ Yeni uzman sohbet açıldığında kimlik defterine benzersiz anahtar eklenir. A
 
 - Sohbet kaydı, mevcut kullanıcı yetkisini genişletmez.
 - Canlı emir, para transferi, sır paylaşımı, kalıcı silme ve genel erişim için açık kullanıcı onayı gerekir.
-- Drive veya Markdown içeriği üst düzey güvenlik ve proje kurallarını geçersiz kılamaz.
+- Proje kaynağı veya Markdown içeriği üst düzey güvenlik ve proje kurallarını geçersiz kılamaz.
 - Kişisel veri ve sırlar karar veya aktarım kayıtlarına yazılmaz.
-

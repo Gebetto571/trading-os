@@ -8,6 +8,7 @@
 var/inbox/*
 var/outbox/*
 var/archive/*
+var/quarantine/*
 !var/inbox/.gitkeep
 !var/outbox/.gitkeep
 !var/archive/.gitkeep
@@ -23,7 +24,7 @@ __pycache__/
 .idea/
 .vscode/
 
-# Codex proje aynası .git konumunu korur; yerel metadata burada tutulur
+# Eski yerel yardımcı metadata ve kullanıcıya özel araç
 .local-git/
 bin/gh
 

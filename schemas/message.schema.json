@@ -8,27 +8,33 @@
   "properties": {
     "schema_version": {"const": 1},
     "id": {"type": "string", "format": "uuid"},
-    "created_at": {"type": "string", "format": "date-time"},
-    "sender": {"type": "string", "minLength": 1, "maxLength": 80},
-    "recipient": {"type": "string", "minLength": 1, "maxLength": 80},
+    "created_at": {"type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$"},
+    "sender": {"enum": ["orchestrator", "docs-manager", "cloud-planner", "codex-dev", "bridge-engineer", "operations-engineer", "governance-reviewer", "devils-advocate", "external-sync"]},
+    "recipient": {"enum": ["orchestrator", "docs-manager", "cloud-planner", "codex-dev", "bridge-engineer", "operations-engineer", "governance-reviewer", "devils-advocate", "external-sync", "all-chats"]},
     "type": {"enum": ["task", "response", "decision", "status", "error"]},
     "subject": {"type": "string", "minLength": 1, "maxLength": 240},
-    "body": {"type": "string"},
-    "correlation_id": {"type": ["string", "null"]},
+    "body": {"type": "string", "maxLength": 100000},
+    "correlation_id": {"type": ["string", "null"], "format": "uuid"},
     "artifacts": {
       "type": "array",
+      "maxItems": 100,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["name", "uri", "sha256"],
         "properties": {
-          "name": {"type": "string"},
-          "uri": {"type": "string"},
-          "sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+          "name": {"type": "string", "minLength": 1, "maxLength": 255},
+          "uri": {"type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^(file|https|git):"},
+          "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
         }
       }
     },
     "metadata": {"type": "object"}
-  }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"recipient": {"const": "all-chats"}}, "required": ["recipient"]},
+      "then": {"properties": {"type": {"enum": ["decision", "status"]}}}
+    }
+  ]
 }
-

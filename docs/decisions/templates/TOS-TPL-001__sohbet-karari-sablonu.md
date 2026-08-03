@@ -1,4 +1,6 @@
 ---
+template_status: deprecated
+deprecated_by: TOS-DEC-004
 id: TOS-CHATDEC-YYYYMMDD-NNN
 record_type: decision
 created_at: YYYY-MM-DDTHH:MM:SSZ
@@ -12,6 +14,11 @@ decision_refs: []
 document_refs: []
 requires_action: false
 ---
+
+> **Kullanımdan kaldırıldı:** Bu şablon rutin sohbet kararları için yeni
+> Markdown üretmek amacıyla kullanılmaz. Yalnız TOS-DEC-004'teki ayrı belge
+> istisnası sağlandığında ve merkezi fihrist aynı işlemde güncellendiğinde
+> `docs-manager` gözetiminde kullanılabilir.
 
 # Karar
 
@@ -30,4 +37,3 @@ Etkilenen bileşen, sohbet ve belgeler.
 ## Uygulama
 
 Yapılacak işler ve kabul ölçütleri.
-

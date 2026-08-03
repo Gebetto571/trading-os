@@ -13,7 +13,13 @@ decision_refs:
 document_refs:
   - TOS-CHAT-REGISTRY
 requires_action: true
+lifecycle: historical-reference
+superseded_in_part_by: TOS-DEC-004
 ---
+
+> **Tarihsel kayıt:** Bu duyurunun ayrı Markdown olay dosyası üretme talimatı
+> yürürlükten kalkmıştır. Güncel dosya yönetimi TOS-DEC-004 ve merkezi fihriste
+> tabidir.
 
 # Aktarım özeti
 
@@ -21,9 +27,11 @@ Trading OS sohbetleri için dosya tabanlı karar ve iletişim günlüğü yürü
 
 ## Beklenen eylem
 
-Her sohbet yeni karar veya aktarım oluştururken TOS-DEC-003 kuralını, sohbet kimlik defterini ve uygun şablonu kullanmalıdır.
+Her sohbet karar veya aktarım kaydederken sohbet kimlik defterini ve güncel
+iletişim sözleşmesini kullanır; mevcut yaşayan kaydı günceller. Ayrı Markdown
+yalnız TOS-DEC-004 istisnasında ve eşzamanlı fihrist kaydıyla oluşturulur.
 
 ## Tamamlanma
 
-Alıcı sohbet bu politikayı okuduğunda ayrı bir `acknowledgement` kaydı üretir; okuma teyidi uygulama teyidi sayılmaz.
-
+Alıcı sohbet okuma teyidini ilişkili JSON olayı/veritabanı durumu olarak üretir;
+sırf teyit amacıyla yeni Markdown açmaz. Okuma teyidi uygulama teyidi sayılmaz.
