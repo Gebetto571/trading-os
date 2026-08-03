@@ -1,6 +1,6 @@
 use crate::candle::Candle;
 use anyhow::{bail, Context};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
 use std::time::Duration;
@@ -40,10 +40,26 @@ impl BinanceRest {
             end - start <= chrono::Duration::days(7),
             "REST repair is limited to gaps of seven days; restore archives first"
         );
+        self.fetch_interval(symbol, "1m", start, end).await
+    }
+
+    pub async fn fetch_interval(
+        &self,
+        symbol: &str,
+        interval: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> anyhow::Result<Vec<Candle>> {
+        let step = interval_duration(interval)?;
+        anyhow::ensure!(start < end, "REST range must not be empty");
+        anyhow::ensure!(
+            end - start <= ChronoDuration::days(31),
+            "REST comparison is limited to 31 days"
+        );
         let mut out = Vec::new();
         let mut cursor = start;
         while cursor < end {
-            let rows = self.page(symbol, cursor, end).await?;
+            let rows = self.page(symbol, interval, cursor, end).await?;
             if rows.is_empty() {
                 break;
             }
@@ -54,7 +70,7 @@ impl BinanceRest {
                 "REST page is not strictly chronological"
             );
             out.extend(rows);
-            cursor = last + chrono::Duration::minutes(1);
+            cursor = last + step;
         }
         out.retain(|c| c.open_time >= start && c.open_time < end);
         Ok(out)
@@ -62,6 +78,7 @@ impl BinanceRest {
     async fn page(
         &self,
         symbol: &str,
+        interval: &str,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> anyhow::Result<Vec<Candle>> {
@@ -72,7 +89,7 @@ impl BinanceRest {
                 .get(format!("{}/api/v3/klines", self.base_url))
                 .query(&[
                     ("symbol", symbol),
-                    ("interval", "1m"),
+                    ("interval", interval),
                     ("startTime", &start.timestamp_millis().to_string()),
                     ("endTime", &(end.timestamp_millis() - 1).to_string()),
                     ("limit", "1000"),
@@ -95,14 +112,18 @@ impl BinanceRest {
                             })
                             .collect::<Vec<_>>()
                             .join(",");
-                        candles.extend(crate::candle::read_csv(
+                        let mut parsed = crate::candle::read_csv(
                             text.as_bytes(),
                             symbol,
                             start - chrono::Duration::days(1),
                             end + chrono::Duration::days(1),
                             "rest",
                             "api/v3/klines",
-                        )?);
+                        )?;
+                        for candle in &mut parsed {
+                            candle.interval = interval.to_owned();
+                        }
+                        candles.extend(parsed);
                     }
                     return Ok(candles);
                 }
@@ -132,6 +153,17 @@ impl BinanceRest {
         }
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("REST retry limit reached")))
             .context("Binance REST request failed")
+    }
+}
+
+fn interval_duration(interval: &str) -> anyhow::Result<ChronoDuration> {
+    match interval {
+        "1m" => Ok(ChronoDuration::minutes(1)),
+        "15m" => Ok(ChronoDuration::minutes(15)),
+        "1h" => Ok(ChronoDuration::hours(1)),
+        "4h" => Ok(ChronoDuration::hours(4)),
+        "1d" => Ok(ChronoDuration::days(1)),
+        _ => bail!("unsupported Binance interval: {interval}"),
     }
 }
 

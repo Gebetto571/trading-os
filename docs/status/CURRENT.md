@@ -20,9 +20,12 @@ claim/terminal yarışları, atomik migration rollback'i, özel dosya izinleri,
 arşivleme hatası, karantina denetimi ve inbox dışına kaçış senaryolarını kapsayan
 toplam 36 Python testi geçmiştir.
 Drive adaptörü ve eşitleme komutları kaldırılmıştır.
+Gerçek bir `cloud-planner -> codex-dev` test mesajı gelen kutusu, arşiv, claim,
+süreli sahiplik ve `completed` durumundan geçirilerek yerel köprü uçtan uca
+doğrulanmıştır.
 
 BTCUSDT spot 1m veri katmanı `crates/market-data` altında uygulanmıştır. Rust format,
-Clippy ve 20 otomatik test geçmektedir. Günlük ve 2024 Ocak gerçek Binance verileri
+Clippy ve 24 otomatik test geçmektedir. Günlük ve 2024 Ocak gerçek Binance verileri
 yerel PostgreSQL/Parquet katmanına aktarılmış; eksik ve mükerrer kayıt bulunmamıştır.
 İkinci çalıştırmalarda veritabanı sayıları ve Parquet SHA-256 değerleri değişmemiştir.
 
@@ -42,7 +45,14 @@ veritabanıyla birebir eşleşmiştir. Ana veri ve yedek aynı fiziksel diskte o
 bu düzen veritabanı/volume kaybına karşı korur, fiziksel disk arızasına karşı ikinci
 cihaz yedeği sayılmaz.
 
-Bilinen kalan işler: farklı içerik çatışmasının gerçek PostgreSQL entegrasyon testi,
-manifest durum makinesinin bütün geçişleri, yapılandırılabilir indirme eşzamanlılığı,
-başarılı fallback sonrası manifest durumunun düzeltilmesi ve Binance üst zaman dilimi
-örnek karşılaştırmalarıdır.
+Piyasa veri katmanının önceki beş açığı kapatılmıştır: farklı içerik çatışması gerçek
+PostgreSQL üzerinde reddedilmiş, manifestin bütün geçişleri sınanmış, indirme
+eşzamanlılığı yapılandırılabilir yapılmış, başarılı fallback kayıtları düzeltilmiş ve
+15m/1h/4h/1d mumları 2024-01-01 Binance örneğiyle birebir karşılaştırılmıştır.
+
+Fiziksel olarak ayrı yedek hedefi henüz bağlı değildir. Doğrulanmış yerel yedek bu
+hedef bağlanana kadar korunur; Drive veri yedeği olarak kullanılmaz.
+
+GitHub deposu özel kalmıştır ve PR birleşince çalışma dallarını otomatik silme ayarı
+açılmıştır. Mevcut GitHub planı özel depoda ana dal koruma kuralını desteklemediği
+için kalite kapısı PR iş akışı ve işletim disipliniyle uygulanır.

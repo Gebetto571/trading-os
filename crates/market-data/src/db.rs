@@ -198,17 +198,118 @@ pub async fn validate_range(
     })
 }
 
-pub async fn manifest_update(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManifestStatus {
+    Planned,
+    Downloading,
+    Downloaded,
+    ChecksumVerified,
+    Imported,
+    Validated,
+    FallbackComplete,
+    Failed,
+}
+
+impl ManifestStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::Downloading => "downloading",
+            Self::Downloaded => "downloaded",
+            Self::ChecksumVerified => "checksum_verified",
+            Self::Imported => "imported",
+            Self::Validated => "validated",
+            Self::FallbackComplete => "fallback_complete",
+            Self::Failed => "failed",
+        }
+    }
+
+    fn parse(value: &str) -> anyhow::Result<Self> {
+        match value {
+            "planned" => Ok(Self::Planned),
+            "downloading" => Ok(Self::Downloading),
+            "downloaded" => Ok(Self::Downloaded),
+            "checksum_verified" => Ok(Self::ChecksumVerified),
+            "imported" => Ok(Self::Imported),
+            "validated" => Ok(Self::Validated),
+            "fallback_complete" => Ok(Self::FallbackComplete),
+            "failed" => Ok(Self::Failed),
+            _ => bail!("unknown manifest status: {value}"),
+        }
+    }
+}
+
+fn manifest_transition_allowed(from: ManifestStatus, to: ManifestStatus) -> bool {
+    use ManifestStatus::*;
+    matches!(
+        (from, to),
+        (Planned, Downloading)
+            | (Downloading, Downloading | Downloaded | Failed)
+            | (Downloaded, Downloading | ChecksumVerified | Failed)
+            | (ChecksumVerified, Imported | Downloading | Failed)
+            | (Imported, Validated | Downloading | Failed)
+            | (Validated, Downloading)
+            | (Failed, Downloading | FallbackComplete)
+            | (FallbackComplete, Downloading)
+    )
+}
+
+pub async fn manifest_plan(
     pool: &PgPool,
     url: &str,
     source_type: &str,
     period: &str,
     file_name: &str,
-    status: &str,
-    error: Option<&str>,
 ) -> anyhow::Result<()> {
-    sqlx::query("INSERT INTO download_manifest(source_url,source_type,period,file_name,status,attempt_count,error_message,completed_at) VALUES($1,$2,$3,$4,$5,1,$6,CASE WHEN $5 IN ('imported','validated') THEN now() END) ON CONFLICT(source_url) DO UPDATE SET status=EXCLUDED.status,attempt_count=download_manifest.attempt_count+1,error_message=EXCLUDED.error_message,completed_at=EXCLUDED.completed_at,updated_at=now()")
- .bind(url).bind(source_type).bind(period).bind(file_name).bind(status).bind(error).execute(pool).await?;
+    sqlx::query("INSERT INTO download_manifest(source_url,source_type,period,file_name,status,attempt_count) VALUES($1,$2,$3,$4,'planned',0) ON CONFLICT(source_url) DO NOTHING")
+        .bind(url)
+        .bind(source_type)
+        .bind(period)
+        .bind(file_name)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn manifest_transition(pool: &PgPool, url: &str, to: ManifestStatus) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
+    let current: String =
+        sqlx::query_scalar("SELECT status FROM download_manifest WHERE source_url=$1 FOR UPDATE")
+            .bind(url)
+            .fetch_one(&mut *tx)
+            .await?;
+    let from = ManifestStatus::parse(&current)?;
+    anyhow::ensure!(
+        manifest_transition_allowed(from, to),
+        "invalid manifest transition {} -> {} for {url}",
+        from.as_str(),
+        to.as_str()
+    );
+    sqlx::query("UPDATE download_manifest SET status=$2,updated_at=now() WHERE source_url=$1")
+        .bind(url)
+        .bind(to.as_str())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn manifest_downloading(pool: &PgPool, url: &str) -> anyhow::Result<()> {
+    manifest_transition(pool, url, ManifestStatus::Downloading).await?;
+    sqlx::query("UPDATE download_manifest SET attempt_count=attempt_count+1,error_message=NULL,completed_at=NULL WHERE source_url=$1")
+        .bind(url)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn manifest_downloaded(pool: &PgPool, url: &str, file_size: i64) -> anyhow::Result<()> {
+    manifest_transition(pool, url, ManifestStatus::Downloaded).await?;
+    sqlx::query("UPDATE download_manifest SET file_size=$2 WHERE source_url=$1")
+        .bind(url)
+        .bind(file_size)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -218,7 +319,8 @@ pub async fn manifest_verified(
     checksum: &str,
     file_size: i64,
 ) -> anyhow::Result<()> {
-    sqlx::query("UPDATE download_manifest SET expected_checksum=$2,actual_checksum=$2,file_size=$3,status='checksum_verified',error_message=NULL,updated_at=now() WHERE source_url=$1")
+    manifest_transition(pool, url, ManifestStatus::ChecksumVerified).await?;
+    sqlx::query("UPDATE download_manifest SET expected_checksum=$2,actual_checksum=$2,file_size=$3,error_message=NULL,updated_at=now() WHERE source_url=$1")
         .bind(url).bind(checksum).bind(file_size).execute(pool).await?;
     Ok(())
 }
@@ -230,9 +332,113 @@ pub async fn manifest_imported(
     first: Option<DateTime<Utc>>,
     last: Option<DateTime<Utc>>,
 ) -> anyhow::Result<()> {
-    sqlx::query("UPDATE download_manifest SET row_count=$2,first_open_time=$3,last_open_time=$4,status='imported',completed_at=now(),error_message=NULL,updated_at=now() WHERE source_url=$1")
+    manifest_transition(pool, url, ManifestStatus::Imported).await?;
+    sqlx::query("UPDATE download_manifest SET row_count=$2,first_open_time=$3,last_open_time=$4,error_message=NULL,updated_at=now() WHERE source_url=$1")
         .bind(url).bind(row_count).bind(first).bind(last).execute(pool).await?;
     Ok(())
+}
+
+pub async fn manifest_validated(pool: &PgPool, url: &str) -> anyhow::Result<()> {
+    manifest_transition(pool, url, ManifestStatus::Validated).await?;
+    sqlx::query(
+        "UPDATE download_manifest SET completed_at=now(),error_message=NULL WHERE source_url=$1",
+    )
+    .bind(url)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn manifest_failed(pool: &PgPool, url: &str, error: &str) -> anyhow::Result<()> {
+    manifest_transition(pool, url, ManifestStatus::Failed).await?;
+    sqlx::query(
+        "UPDATE download_manifest SET error_message=$2,completed_at=NULL WHERE source_url=$1",
+    )
+    .bind(url)
+    .bind(error)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn manifest_fallback_complete(
+    pool: &PgPool,
+    url: &str,
+    source_count: usize,
+) -> anyhow::Result<()> {
+    manifest_transition(pool, url, ManifestStatus::FallbackComplete).await?;
+    sqlx::query("UPDATE download_manifest SET fallback_source_count=$2,error_message=NULL,completed_at=now() WHERE source_url=$1")
+        .bind(url)
+        .bind(source_count as i32)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn manifest_is_validated(pool: &PgPool, url: &str) -> anyhow::Result<bool> {
+    let status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM download_manifest WHERE source_url=$1")
+            .bind(url)
+            .fetch_optional(pool)
+            .await?;
+    Ok(status.as_deref() == Some("validated"))
+}
+
+pub async fn reconcile_failed_daily_with_rest(
+    pool: &PgPool,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> anyhow::Result<u64> {
+    let urls: Vec<String> = sqlx::query_scalar(
+        "SELECT source_url FROM download_manifest
+         WHERE source_type='daily' AND status='failed'
+           AND period ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+           AND to_date(period, 'YYYY-MM-DD') >= $1::date
+           AND to_date(period, 'YYYY-MM-DD') < $2",
+    )
+    .bind(start)
+    .bind(end)
+    .fetch_all(pool)
+    .await?;
+    for url in &urls {
+        manifest_fallback_complete(pool, url, 0).await?;
+    }
+    Ok(urls.len() as u64)
+}
+
+pub async fn reconcile_failed_monthly_with_fallback(
+    pool: &PgPool,
+    symbol: &str,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> anyhow::Result<u64> {
+    let rows = sqlx::query(
+        "SELECT source_url, period FROM download_manifest
+         WHERE source_type='monthly' AND status='failed'
+           AND file_name LIKE $1
+           AND period ~ '^[0-9]{4}-[0-9]{2}$'
+           AND to_date(period || '-01', 'YYYY-MM-DD') >= $2::date
+           AND (to_date(period || '-01', 'YYYY-MM-DD') + interval '1 month') <= $3",
+    )
+    .bind(format!("{symbol}-1m-%"))
+    .bind(start)
+    .bind(end)
+    .fetch_all(pool)
+    .await?;
+    for row in &rows {
+        let url: String = row.get("source_url");
+        let period: String = row.get("period");
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM download_manifest
+             WHERE source_type='daily' AND period LIKE $1
+               AND status IN ('imported','validated','fallback_complete')",
+        )
+        .bind(format!("{period}-%"))
+        .fetch_one(pool)
+        .await?;
+        manifest_fallback_complete(pool, &url, count as usize).await?;
+    }
+    Ok(rows.len() as u64)
 }
 
 pub async fn status(
@@ -297,10 +503,97 @@ impl From<DbCandle> for Candle {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::validation::tests::candle;
+    use rust_decimal::Decimal;
+
     #[test]
     fn migration_uses_numeric_and_primary_key() {
         let sql = include_str!("../migrations/0001_market_data.sql");
         assert!(sql.contains("NUMERIC(38,18)"));
         assert!(sql.contains("PRIMARY KEY (venue, market_type, symbol, interval, open_time)"));
+    }
+
+    #[test]
+    fn manifest_state_machine_accepts_only_declared_transitions() {
+        use ManifestStatus::*;
+        assert!(manifest_transition_allowed(Planned, Downloading));
+        assert!(manifest_transition_allowed(Downloading, Downloaded));
+        assert!(manifest_transition_allowed(Downloaded, ChecksumVerified));
+        assert!(manifest_transition_allowed(ChecksumVerified, Imported));
+        assert!(manifest_transition_allowed(Imported, Validated));
+        assert!(manifest_transition_allowed(Failed, FallbackComplete));
+        assert!(manifest_transition_allowed(Validated, Downloading));
+        assert!(!manifest_transition_allowed(Planned, Validated));
+        assert!(manifest_transition_allowed(Downloading, Downloading));
+        assert!(manifest_transition_allowed(Downloaded, Downloading));
+        assert!(!manifest_transition_allowed(Validated, Imported));
+        assert!(!manifest_transition_allowed(FallbackComplete, Validated));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn postgres_rejects_conflicting_market_content(pool: PgPool) {
+        let original = candle("2024-01-01T00:00:00Z");
+        assert_eq!(
+            insert_candles(&pool, std::slice::from_ref(&original))
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            insert_candles(&pool, std::slice::from_ref(&original))
+                .await
+                .unwrap(),
+            0
+        );
+
+        let mut conflicting = original;
+        conflicting.open = Decimal::new(15, 1);
+        let error = insert_candles(&pool, &[conflicting]).await.unwrap_err();
+        assert!(error.to_string().contains("conflicting candle"));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn postgres_manifest_runs_full_and_fallback_lifecycles(pool: PgPool) {
+        let url = "https://example.test/month.zip";
+        manifest_plan(&pool, url, "monthly", "2024-01", "month.zip")
+            .await
+            .unwrap();
+        assert!(manifest_transition(&pool, url, ManifestStatus::Validated)
+            .await
+            .is_err());
+        manifest_downloading(&pool, url).await.unwrap();
+        manifest_downloaded(&pool, url, 42).await.unwrap();
+        manifest_verified(&pool, url, &"a".repeat(64), 42)
+            .await
+            .unwrap();
+        manifest_imported(
+            &pool,
+            url,
+            1,
+            Some("2024-01-01T00:00:00Z".parse().unwrap()),
+            Some("2024-01-01T00:00:00Z".parse().unwrap()),
+        )
+        .await
+        .unwrap();
+        manifest_validated(&pool, url).await.unwrap();
+        assert!(manifest_is_validated(&pool, url).await.unwrap());
+
+        let fallback = "https://example.test/missing.zip";
+        manifest_plan(&pool, fallback, "monthly", "2024-02", "missing.zip")
+            .await
+            .unwrap();
+        manifest_downloading(&pool, fallback).await.unwrap();
+        manifest_failed(&pool, fallback, "not found").await.unwrap();
+        manifest_fallback_complete(&pool, fallback, 29)
+            .await
+            .unwrap();
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM download_manifest WHERE source_url=$1")
+                .bind(fallback)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "fallback_complete");
     }
 }

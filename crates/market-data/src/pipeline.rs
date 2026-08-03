@@ -12,7 +12,12 @@ use crate::{
 use anyhow::{bail, Context};
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
 use sqlx::PgPool;
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 use tracing::{info, warn};
 
 fn source_name(t: &SourceType) -> &'static str {
@@ -92,6 +97,10 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<()> {
             ensure_valid(pool.as_ref().unwrap(), &cli.symbol, start, end).await?;
             export_all(pool.as_ref().unwrap(), cli, start, end).await?;
         }
+        Command::CompareBinance => {
+            compare_aggregates_with_binance(pool.as_ref().unwrap(), &cli.symbol, start, end)
+                .await?;
+        }
         Command::Status => {
             println!(
                 "{}",
@@ -123,55 +132,121 @@ async fn download(
 ) -> anyhow::Result<Vec<ArchiveItem>> {
     let downloader = Downloader::new(Default::default())?;
     let planned = plan_archives(&cli.symbol, "1m", start, end, Utc::now());
-    let mut downloaded = Vec::new();
-    info!(files = planned.len(), "archive plan created");
-    for item in planned {
-        match fetch_one(&downloader, cli, pool, &item).await {
-            Ok(()) => downloaded.push(item),
-            Err(DownloadError::NotFound(_)) if item.source_type == SourceType::Monthly => {
-                warn!(period=%item.period,"monthly archive missing; using daily archives");
-                for daily in daily_fallback(&item) {
-                    match fetch_one(&downloader, cli, pool, &daily).await {
-                        Ok(()) => downloaded.push(daily),
-                        Err(DownloadError::NotFound(_)) => {
-                            warn!(period=%daily.period,"daily archive missing; REST will fill it")
-                        }
-                        Err(e) => return Err(e.into()),
-                    }
-                }
-            }
-            Err(DownloadError::NotFound(_)) => {
-                warn!(period=%item.period,"daily archive missing; REST will fill it")
-            }
-            Err(e) => return Err(e.into()),
+    if let Some(pool) = pool {
+        for item in &planned {
+            db::manifest_plan(
+                pool,
+                &item.url,
+                source_name(&item.source_type),
+                &item.period,
+                &item.file_name,
+            )
+            .await?;
         }
+    }
+    info!(files = planned.len(), "archive plan created");
+    let semaphore = Arc::new(Semaphore::new(cli.download_concurrency));
+    let mut tasks = JoinSet::new();
+    for item in planned {
+        let semaphore = Arc::clone(&semaphore);
+        let downloader = downloader.clone();
+        let cli = cli.clone();
+        let pool = pool.cloned();
+        tasks.spawn(async move {
+            download_planned_item(&downloader, &cli, pool.as_ref(), item, semaphore).await
+        });
+    }
+    let mut downloaded = Vec::new();
+    while let Some(result) = tasks.join_next().await {
+        downloaded.extend(result.context("download task failed")??);
     }
     Ok(downloaded)
 }
+
+async fn download_planned_item(
+    downloader: &Downloader,
+    cli: &Cli,
+    pool: Option<&PgPool>,
+    item: ArchiveItem,
+    semaphore: Arc<Semaphore>,
+) -> anyhow::Result<Vec<ArchiveItem>> {
+    match fetch_one(downloader, cli, pool, &item, Arc::clone(&semaphore)).await {
+        Ok(()) => Ok(vec![item]),
+        Err(DownloadError::NotFound(_)) if item.source_type == SourceType::Monthly => {
+            warn!(period=%item.period,"monthly archive missing; using daily archives");
+            let daily_items = daily_fallback(&item);
+            if let Some(pool) = pool {
+                for daily in &daily_items {
+                    db::manifest_plan(
+                        pool,
+                        &daily.url,
+                        source_name(&daily.source_type),
+                        &daily.period,
+                        &daily.file_name,
+                    )
+                    .await?;
+                }
+            }
+            let mut tasks = JoinSet::new();
+            for daily in daily_items {
+                let semaphore = Arc::clone(&semaphore);
+                let downloader = downloader.clone();
+                let cli = cli.clone();
+                let pool = pool.cloned();
+                tasks.spawn(async move {
+                    let result =
+                        fetch_one(&downloader, &cli, pool.as_ref(), &daily, semaphore).await;
+                    (daily, result)
+                });
+            }
+            let mut downloaded = Vec::new();
+            while let Some(result) = tasks.join_next().await {
+                let (daily, result) = result.context("daily fallback task failed")?;
+                match result {
+                    Ok(()) => downloaded.push(daily),
+                    Err(DownloadError::NotFound(_)) => {
+                        warn!(period=%daily.period,"daily archive missing; REST will fill it")
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            if let Some(pool) = pool {
+                db::manifest_fallback_complete(pool, &item.url, downloaded.len()).await?;
+            }
+            Ok(downloaded)
+        }
+        Err(DownloadError::NotFound(_)) => {
+            warn!(period=%item.period,"daily archive missing; REST will fill it");
+            Ok(Vec::new())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 async fn fetch_one(
     d: &Downloader,
     cli: &Cli,
     pool: Option<&PgPool>,
     item: &ArchiveItem,
+    semaphore: Arc<Semaphore>,
 ) -> Result<(), DownloadError> {
+    let _permit = semaphore
+        .acquire_owned()
+        .await
+        .map_err(|error| DownloadError::Other(error.into()))?;
     let target = cache_path(&cli.cache_root, item);
     if let Some(p) = pool {
-        db::manifest_update(
-            p,
-            &item.url,
-            source_name(&item.source_type),
-            &item.period,
-            &item.file_name,
-            "downloading",
-            None,
-        )
-        .await
-        .map_err(DownloadError::Other)?;
+        db::manifest_downloading(p, &item.url)
+            .await
+            .map_err(DownloadError::Other)?;
     }
     match d.download_verified(&item.url, &target).await {
         Ok(bytes) => {
             info!(period=%item.period,bytes,"archive verified");
             if let Some(p) = pool {
+                db::manifest_downloaded(p, &item.url, bytes as i64)
+                    .await
+                    .map_err(DownloadError::Other)?;
                 let checksum = cached_checksum(&target).map_err(DownloadError::Other)?;
                 db::manifest_verified(p, &item.url, &checksum, bytes as i64)
                     .await
@@ -181,16 +256,7 @@ async fn fetch_one(
         }
         Err(e) => {
             if let Some(p) = pool {
-                let _ = db::manifest_update(
-                    p,
-                    &item.url,
-                    source_name(&item.source_type),
-                    &item.period,
-                    &item.file_name,
-                    "failed",
-                    Some(&e.to_string()),
-                )
-                .await;
+                let _ = db::manifest_failed(p, &item.url, &e.to_string()).await;
             }
             Err(e)
         }
@@ -250,14 +316,17 @@ async fn import_cached(
         }
         candles.retain(|c| c.open_time >= start && c.open_time < end);
         inserted += db::insert_candles(pool, &candles).await?;
-        db::manifest_imported(
-            pool,
-            &item.url,
-            candles.len() as i64,
-            candles.first().map(|c| c.open_time),
-            candles.last().map(|c| c.open_time),
-        )
-        .await?;
+        if !db::manifest_is_validated(pool, &item.url).await? {
+            db::manifest_imported(
+                pool,
+                &item.url,
+                candles.len() as i64,
+                candles.first().map(|c| c.open_time),
+                candles.last().map(|c| c.open_time),
+            )
+            .await?;
+            db::manifest_validated(pool, &item.url).await?;
+        }
     }
     info!(inserted, "archives imported");
     Ok(inserted)
@@ -284,8 +353,65 @@ async fn repair(
         }
         repaired += db::insert_candles(pool, &rows).await?;
     }
+    let final_report = db::validate_range(pool, symbol, "1m", start, end).await?;
+    anyhow::ensure!(
+        final_report.is_valid(),
+        "REST repair did not produce a complete canonical range"
+    );
+    let daily_reconciled = db::reconcile_failed_daily_with_rest(pool, start, end).await?;
+    let monthly_reconciled =
+        db::reconcile_failed_monthly_with_fallback(pool, symbol, start, end).await?;
+    info!(
+        daily_reconciled,
+        monthly_reconciled, "fallback manifest entries reconciled"
+    );
     info!(repaired, "REST repair complete");
     Ok(repaired)
+}
+
+async fn compare_aggregates_with_binance(
+    pool: &PgPool,
+    symbol: &str,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    let rest = BinanceRest::new()?;
+    for interval in ["15m", "1h", "4h", "1d"] {
+        let canonical = db::load_candles(pool, symbol, interval, start, end).await?;
+        anyhow::ensure!(
+            !canonical.is_empty(),
+            "no canonical {interval} candles in comparison range"
+        );
+        let published = rest.fetch_interval(symbol, interval, start, end).await?;
+        compare_market_values(interval, &canonical, &published)?;
+        info!(
+            interval,
+            rows = canonical.len(),
+            "Binance aggregate comparison passed"
+        );
+    }
+    Ok(())
+}
+
+fn compare_market_values(
+    interval: &str,
+    canonical: &[crate::candle::Candle],
+    published: &[crate::candle::Candle],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        canonical.len() == published.len(),
+        "{interval} row count differs: canonical={}, Binance={}",
+        canonical.len(),
+        published.len()
+    );
+    for (left, right) in canonical.iter().zip(published) {
+        anyhow::ensure!(
+            left.open_time == right.open_time && left.same_market_values(right),
+            "{interval} differs from Binance at {}",
+            left.open_time
+        );
+    }
+    Ok(())
 }
 async fn ensure_valid(
     pool: &PgPool,
@@ -352,6 +478,8 @@ async fn export_all(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::validation::tests::candle;
+    use rust_decimal::Decimal;
     #[test]
     fn daily_is_rest_fallback_candidate() {
         let item = ArchiveItem {
@@ -363,5 +491,22 @@ mod tests {
             end: Utc::now(),
         };
         assert_eq!(source_name(&item.source_type), "daily");
+    }
+
+    #[test]
+    fn aggregate_comparison_detects_market_value_difference() {
+        let mut canonical = candle("2024-01-01T00:00:00Z");
+        canonical.interval = "15m".into();
+        let published = canonical.clone();
+        compare_market_values(
+            "15m",
+            std::slice::from_ref(&canonical),
+            std::slice::from_ref(&published),
+        )
+        .unwrap();
+
+        let mut changed = published;
+        changed.close = Decimal::new(11, 1);
+        assert!(compare_market_values("15m", &[canonical], &[changed]).is_err());
     }
 }

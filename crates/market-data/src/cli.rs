@@ -2,7 +2,7 @@ use chrono::{DateTime, Timelike, Utc};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Clone, Parser)]
 #[command(
     name = "market-data-import",
     about = "Verified Binance spot candle importer"
@@ -28,6 +28,8 @@ pub struct Cli {
     pub parquet_root: PathBuf,
     #[arg(long, default_value = "./data/cache", global = true)]
     pub cache_root: PathBuf,
+    #[arg(long, default_value_t = 4, global = true)]
+    pub download_concurrency: usize,
 }
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
@@ -38,6 +40,7 @@ pub enum Command {
     Repair,
     Aggregate,
     ExportParquet,
+    CompareBinance,
     Run,
     Status,
 }
@@ -84,6 +87,20 @@ impl Cli {
                     .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
             "symbol must contain only uppercase ASCII letters and digits"
         );
+        anyhow::ensure!(
+            (1..=16).contains(&self.download_concurrency),
+            "download concurrency must be between 1 and 16"
+        );
+        if matches!(self.command, Command::CompareBinance) {
+            anyhow::ensure!(
+                start_of_utc_day(self.range()?.0) && start_of_utc_day(self.range()?.1),
+                "Binance aggregate comparison requires UTC day boundaries"
+            );
+        }
         Ok(())
     }
+}
+
+fn start_of_utc_day(value: DateTime<Utc>) -> bool {
+    value.hour() == 0 && value.minute() == 0 && value.second() == 0 && value.nanosecond() == 0
 }
