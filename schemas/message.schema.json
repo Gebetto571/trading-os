@@ -9,8 +9,8 @@
     "schema_version": {"const": 1},
     "id": {"type": "string", "format": "uuid"},
     "created_at": {"type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$"},
-    "sender": {"enum": ["orchestrator", "docs-manager", "cloud-planner", "codex-dev", "bridge-engineer", "operations-engineer", "governance-reviewer", "devils-advocate", "external-sync"]},
-    "recipient": {"enum": ["orchestrator", "docs-manager", "cloud-planner", "codex-dev", "bridge-engineer", "operations-engineer", "governance-reviewer", "devils-advocate", "external-sync", "all-chats"]},
+    "sender": {"enum": ["orchestrator", "docs-manager", "cloud-planner", "codex-dev", "bridge-engineer", "operations-engineer", "governance-reviewer", "devils-advocate", "external-sync", "chatgpt", "codex-local", "chief-engineer"]},
+    "recipient": {"enum": ["orchestrator", "docs-manager", "cloud-planner", "codex-dev", "bridge-engineer", "operations-engineer", "governance-reviewer", "devils-advocate", "external-sync", "chatgpt", "codex-local", "chief-engineer", "all-chats"]},
     "type": {"enum": ["task", "response", "decision", "status", "error"]},
     "subject": {"type": "string", "minLength": 1, "maxLength": 240},
     "body": {"type": "string", "maxLength": 100000},
@@ -19,14 +19,28 @@
       "type": "array",
       "maxItems": 100,
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["name", "uri", "sha256"],
-        "properties": {
-          "name": {"type": "string", "minLength": 1, "maxLength": 255},
-          "uri": {"type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^(file|https|git):"},
-          "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
-        }
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "uri", "sha256"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1, "maxLength": 255},
+              "uri": {"type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^(file|https|git):"},
+              "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "name", "url"],
+            "properties": {
+              "kind": {"type": "string", "minLength": 1, "maxLength": 80},
+              "name": {"type": "string", "minLength": 1, "maxLength": 255},
+              "url": {"type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^https:"}
+            }
+          }
+        ]
       }
     },
     "metadata": {"type": "object"}
@@ -35,6 +49,78 @@
     {
       "if": {"properties": {"recipient": {"const": "all-chats"}}, "required": ["recipient"]},
       "then": {"properties": {"type": {"enum": ["decision", "status"]}}}
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {"const": "task"},
+          "metadata": {"required": ["authority"]}
+        },
+        "required": ["type", "metadata"]
+      },
+      "then": {
+        "properties": {
+          "sender": {"const": "chatgpt"},
+          "recipient": {"const": "codex-local"},
+          "metadata": {
+            "type": "object",
+            "required": ["project_domain", "cloud_conversation_key", "local_lane", "authority", "approval_state", "change_mode", "implementation_brief"],
+            "properties": {
+              "project_domain": {"enum": ["00", "01", "02", "03", "04", "05", "06", "07", "08"]},
+              "cloud_conversation_key": {"pattern": "^tos-cloud-0[0-8]$"},
+              "local_lane": {"pattern": "^chief-engineer/0[0-8]$"},
+              "authority": {"const": "chief-engineer"},
+              "approval_state": {"const": "approved_for_local_implementation"},
+              "change_mode": {"enum": ["FAST", "STANDARD", "STRICT"]},
+              "implementation_brief": {"type": "object"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {"enum": ["response", "status", "error"]},
+          "metadata": {"required": ["authority"]}
+        },
+        "required": ["type", "metadata"]
+      },
+      "then": {
+        "properties": {
+          "sender": {"const": "codex-local"},
+          "recipient": {"const": "chatgpt"},
+          "metadata": {
+            "type": "object",
+            "required": ["project_domain", "cloud_conversation_key", "local_lane", "authority", "approval_state", "result"],
+            "properties": {
+              "project_domain": {"enum": ["00", "01", "02", "03", "04", "05", "06", "07", "08"]},
+              "cloud_conversation_key": {"pattern": "^tos-cloud-0[0-8]$"},
+              "local_lane": {"pattern": "^chief-engineer/0[0-8]$"},
+              "authority": {"const": "chief-engineer"},
+              "result": {
+                "type": "object",
+                "required": ["verification_verdict", "changed_files", "commands", "git_state", "skipped_checks", "risks", "next_safe_step", "permission_state"],
+                "properties": {
+                  "verification_verdict": {"enum": ["ALIGNED", "CONDITIONAL", "BLOCKED"]},
+                  "permission_state": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["commit", "push", "merge", "deployment", "live_enablement"],
+                    "properties": {
+                      "commit": {"const": false},
+                      "push": {"const": false},
+                      "merge": {"const": false},
+                      "deployment": {"const": false},
+                      "live_enablement": {"const": false}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   ]
 }

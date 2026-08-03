@@ -24,6 +24,25 @@ def message(message_id=None, body="body"):
     }
 
 
+def chief_task(domain="00"):
+    item = message()
+    item.update(sender="chatgpt", recipient="codex-local")
+    item["metadata"] = {
+        "project_domain": domain,
+        "cloud_conversation_key": f"tos-cloud-{domain}",
+        "local_lane": f"chief-engineer/{domain}",
+        "authority": "chief-engineer",
+        "approval_state": "approved_for_local_implementation",
+        "change_mode": "STANDARD",
+        "implementation_brief": {
+            "outcome": "Outcome", "approved_logic": ["Logic"], "in_scope": ["Scope"],
+            "non_goals": ["Non-goal"], "acceptance_criteria": ["Criterion"],
+            "required_tests": ["Test"], "risks": ["Risk"], "stop_conditions": ["Stop"],
+        },
+    }
+    return item
+
+
 class CliIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -116,7 +135,7 @@ class CliIntegrationTests(unittest.TestCase):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             self.assertEqual(cli.command_init(argparse.Namespace()), 0)
-        self.assertIn("Uygulanan yeni migration: 3", output.getvalue())
+        self.assertIn("Uygulanan yeni migration: 4", output.getvalue())
         for path in (self.inbox, self.archive, self.quarantine, self.outbox):
             self.assertEqual(os.stat(path).st_mode & 0o777, 0o700)
 
@@ -170,6 +189,55 @@ class CliIntegrationTests(unittest.TestCase):
         self.assertEqual(cli.command_ingest(argparse.Namespace(path=str(self.inbox))), 1)
         self.assertEqual(os.stat(outside).st_mode & 0o777, 0o644)
         self.assertTrue((self.quarantine / "linked.json").is_symlink())
+
+    def test_chief_engineer_claim_and_correlated_result_envelope(self):
+        item = chief_task("00")
+        self._write("task.json", item)
+        self.assertEqual(cli.command_ingest(argparse.Namespace(path=str(self.inbox))), 0)
+        self.assertTrue((self.archive / "task.json").exists())
+        claim_args = argparse.Namespace(
+            lane="chief-engineer/00", base_commit="abc123",
+            owned_path=["trading_os_bridge", "schemas/message.schema.json"], lease_seconds=300,
+        )
+        self.assertEqual(cli.command_claim_task(claim_args), 0)
+        report = {
+            "subject": "Implemented",
+            "body": "Local implementation verified.",
+            "changed_files": ["trading_os_bridge/store.py"],
+            "commands": [{"command": "python3 -m unittest", "exit_code": 0, "summary": "passed"}],
+            "git_state": {"branch": "main", "commit_created": False},
+            "skipped_checks": [],
+            "risks": [],
+            "verification_verdict": "ALIGNED",
+            "next_safe_step": "Drive readback",
+        }
+        report_path = self.root / "result.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        self.assertEqual(cli.command_result(argparse.Namespace(
+            task_id=item["id"], report=str(report_path)
+        )), 0)
+        task_row = cli.store().get_message(item["id"])
+        self.assertIsNotNone(task_row["result_message_id"])
+        result_row = cli.store().get_message(task_row["result_message_id"])
+        result = json.loads(result_row["payload_json"])
+        self.assertEqual(result["correlation_id"], item["id"])
+        self.assertEqual(result["metadata"]["result"]["verification_verdict"], "ALIGNED")
+        self.assertTrue(all(
+            value is False
+            for value in result["metadata"]["result"]["permission_state"].values()
+        ))
+
+    def test_existing_send_command_still_generates_a_valid_outbound_message(self):
+        args = argparse.Namespace(
+            to="cloud-planner", type="task", subject="Regression", body="Body",
+            correlation_id=None,
+        )
+        self.assertEqual(cli.command_send(args), 0)
+        files = list(self.outbox.glob("*.json"))
+        self.assertEqual(len(files), 1)
+        payload = json.loads(files[0].read_text(encoding="utf-8"))
+        self.assertEqual(payload["recipient"], "cloud-planner")
+        self.assertEqual(cli.store().get_message(payload["id"])["direction"], "outbound")
 
 
 if __name__ == "__main__":

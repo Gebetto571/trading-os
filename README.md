@@ -37,6 +37,9 @@ sonra şu komutlar kullanılır:
 
 ```bash
 python3 -m trading_os_bridge claim --worker codex-dev
+python3 -m trading_os_bridge claim-task --lane chief-engineer/00 \
+  --base-commit "$(git rev-parse HEAD)" --owned-path trading_os_bridge
+python3 -m trading_os_bridge result MESSAGE_UUID --report result-report.json
 python3 -m trading_os_bridge status MESSAGE_UUID completed --worker codex-dev
 python3 -m trading_os_bridge recover --id MESSAGE_UUID
 python3 -m trading_os_bridge check MESSAGE_UUID
@@ -47,6 +50,14 @@ claim sahibi ve geçerli süreyle `completed`/`failed` yazabilir. `claim`, bir
 mesajın aynı anda iki uygulayıcı tarafından çalıştırılmasını önler; `recover`
 yalnız kullanıcı talimatıyla yarım kalmış veya süresi dolmuş sahipliği kurtarır.
 Geçersiz ve bütünlüğü bozuk zarflar çalıştırılmaz, karantinaya alınır.
+
+Proje dosyası değiştiren kullanıcı-devirli görevler `schemas/conversation-map.json` ile
+`chief-engineer/00`–`chief-engineer/08` hatlarına yönlenir. Bunlar yalnız
+`claim-task` ile, `chief-engineer` tek aktif yazarı ve açık dosya sahipliğiyle
+alınabilir. `result`, commit/push/merge/deployment/canlı işlem yetkilerini kapalı
+tutan korelasyonlu sonuç zarfını üretir. Görev kaynağı güncel Drive
+`01_CHATGPT_GELEN` zarfı veya GitHub teknik referansıdır; eski Drive kod deposu
+yolları kullanılmaz.
 
 ## Temel belgeler
 
