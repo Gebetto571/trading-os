@@ -1,7 +1,7 @@
 use crate::candle::Candle;
 use anyhow::{bail, Context};
 use chrono::{DateTime, Datelike, Duration, Utc};
-use sqlx::{PgPool, Postgres, QueryBuilder, Row};
+use sqlx::{pool::PoolConnection, PgPool, Postgres, QueryBuilder, Row};
 use std::collections::HashMap;
 
 pub async fn connect(url: &str) -> anyhow::Result<PgPool> {
@@ -125,6 +125,165 @@ pub async fn load_candles(
 ) -> anyhow::Result<Vec<Candle>> {
     let rows=sqlx::query_as::<_,DbCandle>("SELECT venue,market_type,symbol,interval,open_time,open,high,low,close,base_asset_volume,close_time,quote_asset_volume,trade_count,taker_buy_base_volume,taker_buy_quote_volume,source,source_file FROM market_candles WHERE venue='binance' AND market_type='spot' AND symbol=$1 AND interval=$2 AND open_time >= $3 AND open_time < $4 ORDER BY open_time").bind(symbol).bind(interval).bind(start).bind(end).fetch_all(pool).await?;
     Ok(rows.into_iter().map(Into::into).collect())
+}
+
+pub async fn latest_open_time(
+    pool: &PgPool,
+    symbol: &str,
+    interval: &str,
+) -> anyhow::Result<Option<DateTime<Utc>>> {
+    Ok(sqlx::query_scalar(
+        "SELECT max(open_time) FROM market_candles
+         WHERE venue='binance' AND market_type='spot' AND symbol=$1 AND interval=$2",
+    )
+    .bind(symbol)
+    .bind(interval)
+    .fetch_one(pool)
+    .await?)
+}
+
+pub struct SyncLock {
+    connection: Option<PoolConnection<Postgres>>,
+    scope: String,
+}
+
+pub async fn try_sync_lock(pool: &PgPool, scope: &str) -> anyhow::Result<Option<SyncLock>> {
+    let mut connection = pool.acquire().await?;
+    // A session advisory lock must never return to the pool if the task is
+    // cancelled before `release`. Closing the session on drop lets PostgreSQL
+    // release the lock even on cancellation or panic.
+    connection.close_on_drop();
+    let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext($1))")
+        .bind(scope)
+        .fetch_one(&mut *connection)
+        .await?;
+    Ok(acquired.then(|| SyncLock {
+        connection: Some(connection),
+        scope: scope.to_owned(),
+    }))
+}
+
+impl SyncLock {
+    pub async fn release(mut self) -> anyhow::Result<()> {
+        let mut connection = self
+            .connection
+            .take()
+            .context("sync lock has no connection")?;
+        let released = sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock(hashtext($1))")
+            .bind(&self.scope)
+            .fetch_one(&mut *connection)
+            .await;
+        match released {
+            Ok(true) => Ok(()),
+            Ok(false) => {
+                let _ = connection.close().await;
+                bail!("sync advisory lock was not held")
+            }
+            Err(error) => {
+                let _ = connection.close().await;
+                Err(error.into())
+            }
+        }
+    }
+}
+
+pub async fn interrupt_stale_sync_runs(pool: &PgPool, symbol: &str) -> anyhow::Result<u64> {
+    Ok(sqlx::query(
+        "UPDATE market_data_sync_runs
+         SET status='interrupted',stage='interrupted',finished_at=now(),
+             error_message='previous process ended before recording a terminal state'
+         WHERE venue='binance' AND market_type='spot' AND symbol=$1 AND interval='1m'
+           AND status='running'",
+    )
+    .bind(symbol)
+    .execute(pool)
+    .await?
+    .rows_affected())
+}
+
+pub async fn begin_sync_run(
+    pool: &PgPool,
+    symbol: &str,
+    start: Option<DateTime<Utc>>,
+    end: DateTime<Utc>,
+) -> anyhow::Result<i64> {
+    Ok(sqlx::query_scalar(
+        "INSERT INTO market_data_sync_runs(
+             venue,market_type,symbol,interval,range_start,range_end,stage,status
+         ) VALUES('binance','spot',$1,'1m',$2,$3,'starting','running') RETURNING id",
+    )
+    .bind(symbol)
+    .bind(start)
+    .bind(end)
+    .fetch_one(pool)
+    .await?)
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SyncRunCounts {
+    pub rows_fetched: u64,
+    pub rows_inserted: u64,
+    pub rows_repaired: u64,
+    pub gaps_remaining: u64,
+    pub partitions_verified: u64,
+}
+
+pub async fn finish_sync_run(
+    pool: &PgPool,
+    id: i64,
+    status: &str,
+    stage: &str,
+    counts: SyncRunCounts,
+    error: Option<&str>,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        matches!(status, "succeeded" | "failed" | "noop"),
+        "invalid sync terminal status"
+    );
+    sqlx::query(
+        "UPDATE market_data_sync_runs
+         SET status=$2,stage=$3,rows_fetched=$4,rows_inserted=$5,rows_repaired=$6,
+             gaps_remaining=$7,partitions_verified=$8,finished_at=now(),error_message=$9
+         WHERE id=$1 AND status='running'",
+    )
+    .bind(id)
+    .bind(status)
+    .bind(stage)
+    .bind(counts.rows_fetched as i64)
+    .bind(counts.rows_inserted as i64)
+    .bind(counts.rows_repaired as i64)
+    .bind(counts.gaps_remaining as i64)
+    .bind(counts.partitions_verified as i64)
+    .bind(error)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn update_sync_stage(pool: &PgPool, id: i64, stage: &str) -> anyhow::Result<()> {
+    sqlx::query("UPDATE market_data_sync_runs SET stage=$2 WHERE id=$1 AND status='running'")
+        .bind(id)
+        .bind(stage)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn record_skipped_sync_run(
+    pool: &PgPool,
+    symbol: &str,
+    end: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT INTO market_data_sync_runs(
+             venue,market_type,symbol,interval,range_end,stage,status,finished_at
+         ) VALUES('binance','spot',$1,'1m',$2,'lock','skipped_locked',now())",
+    )
+    .bind(symbol)
+    .bind(end)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 pub async fn load_candles_page(
@@ -734,6 +893,10 @@ mod tests {
         assert!(semantics.contains("fallback_parent_url"));
         assert!(semantics.contains("coverage_row_count"));
         assert!(semantics.contains("WHERE status = 'fallback_complete'"));
+        let sync_runs = include_str!("../migrations/0005_sync_runs.sql");
+        assert!(sync_runs.contains("CREATE TABLE market_data_sync_runs"));
+        assert!(!sync_runs.contains("UPDATE market_candles"));
+        assert!(!sync_runs.contains("DELETE FROM market_candles"));
     }
 
     #[test]
@@ -906,5 +1069,95 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(actual, parent);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn sync_lock_is_exclusive_and_reusable(pool: PgPool) {
+        let first = try_sync_lock(&pool, "test:BTCUSDT").await.unwrap().unwrap();
+        assert!(try_sync_lock(&pool, "test:BTCUSDT")
+            .await
+            .unwrap()
+            .is_none());
+        first.release().await.unwrap();
+        let second = try_sync_lock(&pool, "test:BTCUSDT").await.unwrap().unwrap();
+        second.release().await.unwrap();
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn dropped_sync_lock_closes_session_and_releases_lock(pool: PgPool) {
+        let first = try_sync_lock(&pool, "test:drop:BTCUSDT")
+            .await
+            .unwrap()
+            .unwrap();
+        drop(first);
+
+        let second = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            try_sync_lock(&pool, "test:drop:BTCUSDT"),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        second.release().await.unwrap();
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn sync_run_records_interruption_and_terminal_counts(pool: PgPool) {
+        let end = "2024-01-01T00:10:00Z".parse().unwrap();
+        let stale = begin_sync_run(
+            &pool,
+            "BTCUSDT",
+            Some("2024-01-01T00:00:00Z".parse().unwrap()),
+            end,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            interrupt_stale_sync_runs(&pool, "BTCUSDT").await.unwrap(),
+            1
+        );
+        let stale_status: String =
+            sqlx::query_scalar("SELECT status FROM market_data_sync_runs WHERE id=$1")
+                .bind(stale)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stale_status, "interrupted");
+
+        let run = begin_sync_run(
+            &pool,
+            "BTCUSDT",
+            Some("2024-01-01T00:00:00Z".parse().unwrap()),
+            end,
+        )
+        .await
+        .unwrap();
+        update_sync_stage(&pool, run, "verify_parquet")
+            .await
+            .unwrap();
+        finish_sync_run(
+            &pool,
+            run,
+            "succeeded",
+            "complete",
+            SyncRunCounts {
+                rows_fetched: 10,
+                rows_inserted: 2,
+                rows_repaired: 2,
+                gaps_remaining: 0,
+                partitions_verified: 5,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM market_data_sync_runs WHERE id=$1")
+                .bind(run)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "succeeded");
     }
 }

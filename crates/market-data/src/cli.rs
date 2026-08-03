@@ -28,6 +28,13 @@ pub struct Cli {
     pub parquet_root: PathBuf,
     #[arg(long, default_value = "./data/cache", global = true)]
     pub cache_root: PathBuf,
+    #[arg(
+        long,
+        env = "TRADING_OS_MARKET_DATA_HEALTH_DIR",
+        default_value = "./data/health/btcusdt",
+        global = true
+    )]
+    pub health_root: PathBuf,
     #[arg(long, default_value_t = 4, global = true)]
     pub download_concurrency: usize,
 }
@@ -41,6 +48,7 @@ pub enum Command {
     Aggregate,
     ExportParquet,
     VerifyParquet,
+    Sync,
     CompareBinance,
     Run,
     Status,
