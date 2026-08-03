@@ -5,7 +5,7 @@ use crate::{
     cli::{Cli, Command},
     db,
     download::{cached_checksum, extract_single_csv, verify_cached, DownloadError, Downloader},
-    parquet_export,
+    parquet_export, parquet_verify,
     rest::BinanceRest,
     validation::{validate, ValidationReport},
 };
@@ -97,6 +97,18 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<()> {
             ensure_valid(pool.as_ref().unwrap(), &cli.symbol, start, end).await?;
             export_all(pool.as_ref().unwrap(), cli, start, end).await?;
         }
+        Command::VerifyParquet => {
+            let report = parquet_verify::verify(
+                pool.as_ref().unwrap(),
+                &cli.parquet_root,
+                &cli.symbol,
+                start,
+                end,
+            )
+            .await;
+            println!("{}", serde_json::to_string(&report)?);
+            anyhow::ensure!(report.passed, "PostgreSQL-Parquet verification failed");
+        }
         Command::CompareBinance => {
             compare_aggregates_with_binance(pool.as_ref().unwrap(), &cli.symbol, start, end)
                 .await?;
@@ -177,12 +189,13 @@ async fn download_planned_item(
             let daily_items = daily_fallback(&item);
             if let Some(pool) = pool {
                 for daily in &daily_items {
-                    db::manifest_plan(
+                    db::manifest_plan_fallback(
                         pool,
                         &daily.url,
                         source_name(&daily.source_type),
                         &daily.period,
                         &daily.file_name,
+                        &item.url,
                     )
                     .await?;
                 }
@@ -205,18 +218,24 @@ async fn download_planned_item(
                 match result {
                     Ok(()) => downloaded.push(daily),
                     Err(DownloadError::NotFound(_)) => {
-                        warn!(period=%daily.period,"daily archive missing; REST will fill it")
+                        warn!(period=%daily.period,"daily archive missing; REST will fill it");
+                        if let Some(pool) = pool {
+                            db::manifest_fallback_pending(pool, &daily.url).await?;
+                        }
                     }
                     Err(error) => return Err(error.into()),
                 }
             }
             if let Some(pool) = pool {
-                db::manifest_fallback_complete(pool, &item.url, downloaded.len()).await?;
+                db::manifest_fallback_pending(pool, &item.url).await?;
             }
             Ok(downloaded)
         }
         Err(DownloadError::NotFound(_)) => {
             warn!(period=%item.period,"daily archive missing; REST will fill it");
+            if let Some(pool) = pool {
+                db::manifest_fallback_pending(pool, &item.url).await?;
+            }
             Ok(Vec::new())
         }
         Err(error) => Err(error.into()),
@@ -240,7 +259,19 @@ async fn fetch_one(
             .await
             .map_err(DownloadError::Other)?;
     }
-    match d.download_verified(&item.url, &target).await {
+    let result = if let Some(pool) = pool {
+        let pool = pool.clone();
+        let url = item.url.clone();
+        d.download_verified_tracked(&item.url, &target, move || {
+            let pool = pool.clone();
+            let url = url.clone();
+            async move { db::manifest_download_attempt(&pool, &url).await }
+        })
+        .await
+    } else {
+        d.download_verified(&item.url, &target).await
+    };
+    match result {
         Ok(bytes) => {
             info!(period=%item.period,bytes,"archive verified");
             if let Some(p) = pool {
@@ -358,9 +389,9 @@ async fn repair(
         final_report.is_valid(),
         "REST repair did not produce a complete canonical range"
     );
-    let daily_reconciled = db::reconcile_failed_daily_with_rest(pool, start, end).await?;
+    let daily_reconciled = db::reconcile_pending_daily_with_rest(pool, symbol, start, end).await?;
     let monthly_reconciled =
-        db::reconcile_failed_monthly_with_fallback(pool, symbol, start, end).await?;
+        db::reconcile_pending_monthly_with_fallback(pool, symbol, start, end).await?;
     info!(
         daily_reconciled,
         monthly_reconciled, "fallback manifest entries reconciled"

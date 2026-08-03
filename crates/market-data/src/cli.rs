@@ -40,6 +40,7 @@ pub enum Command {
     Repair,
     Aggregate,
     ExportParquet,
+    VerifyParquet,
     CompareBinance,
     Run,
     Status,
