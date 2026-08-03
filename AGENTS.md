@@ -20,6 +20,8 @@ Mottomuz: “Hızlı çalışan, yükü az, pratik ve işlevsel çözümler üre
 - Mevcut Markdown dosyası bulunan sohbet; karar, tavsiye, bilgi, aktarım, yanıt ve durum kayıtlarını öncelikle o dosyaya tarihli bölüm olarak ekler.
 - Okundu, tamamlandı, kabul, küçük revizyon, kısa özet veya tek seferlik aktarım için ayrı Markdown dosyası oluşturma.
 - Yeni dosya yalnızca kullanıcı açıkça ayrı dosya isterse veya anayasanın bağımsız yaşam döngüsü, güvenlik, denetim ya da zorunlu kalıcılık istisnalarından biri varsa oluşturulur; Markdown dosyasına `creation_reason` yazılır.
+- Her yeni yönetilen Markdown dosyası, oluşturulduğu aynı işlem içinde TOS-DEC-004 belgesindeki Merkezi Markdown Fihristi’ne kaydedilir; sahibi, kullanan sohbetler, amacı, konumu ve oluşturma gerekçesi yazılır.
+- Dosya taşıma, yeniden adlandırma, arşivleme veya kapsam değişikliğinde yeni fihrist satırı açma; mevcut sicil kaydını güncelle.
 - Dosya konumu belirsizse yeni dosya açma; `docs-manager` sohbetine yönlendir.
 - Açık kullanıcı talimatı olmadan periyodik dosya veya aktarım kontrolü yapma.
 - Sohbet kimliklerinde `docs/decisions/system/TOS-CHAT-REGISTRY__v1.0.md` kullan.
