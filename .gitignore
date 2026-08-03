@@ -26,3 +26,9 @@ __pycache__/
 # Codex proje aynası .git konumunu korur; yerel metadata burada tutulur
 .local-git/
 bin/gh
+
+# Rust ve piyasa verisi
+target/
+/data/
+*.part
+/data/**/*.sha256

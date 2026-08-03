@@ -1,6 +1,7 @@
 # ChatGPT project context
 
-This directory is a local mirror of the ChatGPT project “Trading OS”.
+This directory is the primary local Git repository for “Trading OS” and is connected
+to the private GitHub repository `Gebetto571/trading-os`.
 
 - Treat every file under `sources/` as read-only reference material.
 - Do not edit, rename, move, or delete synced project files.

@@ -36,3 +36,22 @@ python3 -m trading_os_bridge ingest var/inbox
 - [Talimatla çalışan Drive–Codex köprüsü](docs/automation-runbook.md)
 
 `sources/` klasörü ChatGPT projesinden eşlenen salt okunur kaynaktır; değiştirilmez.
+
+## BTCUSDT tarihsel veri katmanı
+
+Rust veri hattı `crates/market-data` altında bulunur. Binance Global spot `BTCUSDT/1m`
+arşivlerini SHA-256 ile doğrular; PostgreSQL'e çelişki kontrollü aktarır, boşlukları
+sınırlı REST istekleriyle onarır ve kanonik veriden decimal Parquet ile `15m`, `1h`,
+`4h`, `1d` mumları üretir.
+
+```bash
+cp .env.example .env
+# .env içindeki parolayı değiştirin
+docker compose -f compose.market-data.yml up -d postgres
+set -a; source .env; set +a
+cargo run --release -p trading-os-market-data --bin market-data-import -- run \
+  --start 2023-08-03T00:00:00Z --end latest-closed
+```
+
+Ayrıntılı mimari ve işletim bilgisi:
+[BTCUSDT veri katmanı](docs/architecture/market-data.md).
