@@ -2,7 +2,7 @@
 id: TOS-DEC-004
 title: Merkezi Dosya Yönetim Anayasası
 status: sealed
-version: 1.8
+version: 1.9
 date: 2026-08-03
 last_updated: 2026-08-04
 authority: project-constitution
@@ -68,6 +68,28 @@ Yeni dosya yalnızca aşağıdaki gerekçelerden en az biri varsa açılabilir:
 6. Mevcut dosyaya eklemek belgenin amacını belirgin biçimde bozacak veya kullanılmasını güçleştirecek.
 
 Yeni Markdown dosyasında kısa bir `creation_reason` alanı bulunur ve yukarıdaki gerekçelerden hangisinin uygulandığı belirtilir. “Düzenli görünmesi” veya “ileride lazım olabilir” tek başına yeterli gerekçe değildir.
+
+### 5.1. Yeni dosya bildirimi ve talimatla belge uyumu
+
+Her yeni proje dosyası veya belge oluşturulduğunda oluşturan sohbet, aynı görevde
+`docs-manager`a şu kısa bildirimi verir: `yol veya Drive kimliği`, `tür`, `amaç`,
+`kanonik sahip`, `ilişkili mevcut belge` ve varsa `oluşturma gerekçesi`. Bildirim
+kendi başına yeni Markdown, ayrı aktarım günlüğü veya yeni fihrist satırı değildir.
+
+Kullanıcı “belgeleri senkron et” dediğinde `docs-manager` yalnız bildirilen dosyalar
+ve doğrudan ilişkili mevcut kayıtlar için şunları yapar:
+
+1. kanonik sahibi, konumu ve yaşam durumunu doğrular;
+2. uygun mevcut belgeye ilişkiyi ekler veya günceller;
+3. yönetilen Markdown ise bu anayasanın fihrist kuralını, başka dosya ise yalnız
+   gerekli sahiplik/referans kaydını uygular;
+4. çelişki, gereksiz kopya veya yanlış yol varsa kullanıcıya çözüm önerisi verir.
+
+Bu uyum işlemi otomatik veya periyodik tarama değildir; Drive–Git arasında otomatik
+kopyalama yapmaz, yeni servis ya da kayıt sistemi kurmaz ve açık yetki olmadan
+silme, commit, push, PR veya merge gerçekleştirmez. Kaynak kodu, test, şema,
+migration ve çalışan sistem değişikliklerinin teknik uygulanması Chief Engineer'ın
+sorumluluğunda kalır.
 
 ## 6. Yeni dosya oluşturulmayacak durumlar
 
@@ -415,6 +437,7 @@ Değişiklik için:
 
 | Tarih | Sürüm | Değişiklik | Onay |
 |---|---:|---|---|
+| 2026-08-04 | 1.9 | Her yeni dosya için docs-manager bildirimi ve yalnız kullanıcı “belgeleri senkron et” dediğinde çalışan sade belge uyum akışı eklendi. | Kullanıcı talimatı |
 | 2026-08-04 | 1.8 | Google Drive güncel yapay zekâ hafızası ve koordinasyon katmanı olarak yeniden tanımlandı; eski Drive kod deposu yasağı korunarak tek kanonik sahip, yayın kopyası, görev–sonuç ve olay bazlı doğrulama kuralları mühürlendi. | Kullanıcı talimatı ve Drive klasör doğrulaması |
 | 2026-08-03 | 1.7 | Yerel belge hattı ile Chief Engineer yazılım hattı ayrıldı; TOS-DEC karar eşiği ve kanıtlanmış fihrist sahiplikleri sade tek-yazar düzenine alındı. | Kullanıcı talimatı |
 | 2026-08-03 | 1.6 | Kanonik yerel depo yolu yeniden doğrulandı; eski Drive yolları geçersiz, GitHub deposunun güncel görünürlüğü public olarak mühürlendi. | Kullanıcı talimatı ve canlı doğrulama |
