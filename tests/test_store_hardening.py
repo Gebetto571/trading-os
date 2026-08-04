@@ -7,7 +7,7 @@ import uuid
 import os
 from pathlib import Path
 
-from trading_os_bridge.store import IntegrityConflict, InvalidTransition, Store
+from trading_os_bridge.store import IntegrityConflict, InvalidTransition, OwnershipConflict, Store
 
 
 MIGRATIONS = Path(__file__).parents[1] / "migrations"
@@ -20,6 +20,21 @@ def message(message_id=None, body="body"):
         "recipient": "codex-dev", "type": "task", "subject": "Test", "body": body,
         "correlation_id": None, "artifacts": [], "metadata": {},
     }
+
+
+def chief_task(domain="00", message_id=None):
+    item = message(message_id)
+    item.update(sender="chatgpt", recipient="codex-local")
+    item["metadata"] = {
+        "project_domain": domain,
+        "cloud_conversation_key": f"tos-cloud-{domain}",
+        "local_lane": f"chief-engineer/{domain}",
+        "authority": "chief-engineer",
+        "approval_state": "approved_for_local_implementation",
+        "change_mode": "STANDARD",
+        "implementation_brief": {},
+    }
+    return item
 
 
 class StoreHardeningTests(unittest.TestCase):
@@ -100,6 +115,52 @@ class StoreHardeningTests(unittest.TestCase):
             thread.join()
         self.assertEqual(sum(row is not None for row in results), 1)
         self.assertEqual(self.store.get_message(item["id"])["attempt_count"], 1)
+
+    def test_chief_engineer_claim_is_lane_scoped_and_restart_idempotent(self):
+        item = chief_task("04")
+        self.store.put_message(item, "inbound", "received")
+        self.assertIsNone(self.store.claim_chief_engineer_task(
+            "chief-engineer/03", "abc123", ["tests/test_bridge.py"]
+        ))
+        claimed = self.store.claim_chief_engineer_task(
+            "chief-engineer/04", "abc123", ["tests/test_bridge.py"]
+        )
+        self.assertEqual(claimed["id"], item["id"])
+        self.assertEqual(claimed["active_writer"], "chief-engineer")
+        self.assertEqual(json.loads(claimed["owned_paths_json"]), ["tests/test_bridge.py"])
+        restarted = Store(self.store.database, MIGRATIONS)
+        restarted.migrate()
+        self.assertIsNone(restarted.claim_chief_engineer_task(
+            "chief-engineer/04", "abc123", ["tests/test_bridge.py"]
+        ))
+        self.assertEqual(restarted.get_message(item["id"])["attempt_count"], 1)
+
+    def test_chief_engineer_claim_rejects_unapproved_and_overlapping_paths(self):
+        invalid = chief_task("00")
+        invalid["metadata"]["approval_state"] = "draft"
+        self.store.put_message(invalid, "inbound", "received")
+        self.assertIsNone(self.store.claim_message("not-chief-engineer"))
+        self.assertIsNone(self.store.claim_chief_engineer_task(
+            "chief-engineer/00", "abc123", ["trading_os_bridge/store.py"]
+        ))
+
+        first = chief_task("01")
+        second = chief_task("02")
+        self.store.put_message(first, "inbound", "received")
+        self.store.put_message(second, "inbound", "received")
+        self.store.claim_chief_engineer_task(
+            "chief-engineer/01", "abc123", ["trading_os_bridge"]
+        )
+        with self.assertRaises(OwnershipConflict) as context:
+            self.store.claim_chief_engineer_task(
+                "chief-engineer/02", "abc123", ["trading_os_bridge/cli.py"]
+            )
+        self.assertIn("çakışıyor", str(context.exception))
+
+    def test_chief_engineer_owned_paths_are_repository_relative_and_non_overlapping(self):
+        for paths in (["/tmp/x"], ["../secret"], ["schemas", "schemas/message.schema.json"]):
+            with self.subTest(paths=paths), self.assertRaises(ValueError):
+                self.store.claim_chief_engineer_task("chief-engineer/00", "abc123", paths)
 
     def test_inbound_processing_cannot_bypass_claim(self):
         received = message()
@@ -262,7 +323,7 @@ class StoreHardeningTests(unittest.TestCase):
                 ("DEC-OLD", "Old", "accepted", 1, "preserved", "2026-08-03T00:00:00Z", "2026-08-03T00:00:00Z"),
             )
         upgraded = Store(database, MIGRATIONS)
-        self.assertEqual(upgraded.migrate(), 2)
+        self.assertEqual(upgraded.migrate(), 3)
         self.assertEqual(upgraded.get_decision("DEC-OLD", 1)["body"], "preserved")
         self.assertEqual(upgraded.put_decision("DEC-OLD", "Old", "accepted", "v2"), 2)
 

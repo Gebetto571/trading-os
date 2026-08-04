@@ -9,8 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from .store import IntegrityConflict, InvalidTransition, Store
-from .validation import VALID_TYPES, load_registry_roles, parse_json_strict, sha256_bytes, validate_message
+from .store import IntegrityConflict, InvalidTransition, OwnershipConflict, Store
+from .validation import (
+    VALID_TYPES, load_conversation_map, load_registry_roles, parse_json_strict,
+    sha256_bytes, validate_message,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +24,7 @@ OUTBOX = ROOT / "var/outbox"
 ARCHIVE = ROOT / "var/archive"
 QUARANTINE = ROOT / "var/quarantine"
 REGISTRY = ROOT / "docs/decisions/system/TOS-CHAT-REGISTRY__v1.0.md"
+CONVERSATION_MAP = ROOT / "schemas/conversation-map.json"
 TERMINAL_STATUSES = ("completed", "failed")
 
 
@@ -37,7 +41,9 @@ def store() -> Store:
 
 
 def _validate(message: object) -> dict:
-    return validate_message(message, load_registry_roles(REGISTRY))
+    return validate_message(
+        message, load_registry_roles(REGISTRY), load_conversation_map(CONVERSATION_MAP)
+    )
 
 
 def _private_dir(path: Path) -> None:
@@ -226,6 +232,149 @@ def command_claim(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_claim_task(args: argparse.Namespace) -> int:
+    try:
+        row = store().claim_chief_engineer_task(
+            args.lane, args.base_commit, args.owned_path, args.lease_seconds,
+        )
+    except (InvalidTransition, OwnershipConflict, ValueError) as error:
+        print(json.dumps({"claimed": False, "error": str(error)}, ensure_ascii=False))
+        return 1
+    if row is None:
+        print(json.dumps({"claimed": False}))
+        return 1
+    print(json.dumps({"claimed": True, **dict(row)}, ensure_ascii=False))
+    return 0
+
+
+RESULT_REPORT_KEYS = {
+    "subject", "body", "changed_files", "commands", "git_state",
+    "skipped_checks", "risks", "verification_verdict", "next_safe_step",
+}
+
+
+def _build_result(task: sqlite3.Row, report: dict) -> dict:
+    if set(report) != RESULT_REPORT_KEYS:
+        missing = RESULT_REPORT_KEYS - set(report)
+        extra = set(report) - RESULT_REPORT_KEYS
+        raise ValueError(f"Sonuç raporu alanları geçersiz; eksik={sorted(missing)}, fazla={sorted(extra)}")
+    task_payload = json.loads(task["payload_json"])
+    metadata = task_payload["metadata"]
+    message_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"trading-os-result:{task['id']}"))
+    return {
+        "schema_version": 1,
+        "id": message_id,
+        "created_at": now_utc(),
+        "sender": "codex-local",
+        "recipient": "chatgpt",
+        "type": "response",
+        "subject": report["subject"],
+        "body": report["body"],
+        "correlation_id": task["correlation_id"] or task["id"],
+        "artifacts": [],
+        "metadata": {
+            "project_domain": metadata["project_domain"],
+            "cloud_conversation_key": metadata["cloud_conversation_key"],
+            "local_lane": metadata["local_lane"],
+            "authority": "chief-engineer",
+            "approval_state": "implemented_locally",
+            "updated_by": "chief-engineer",
+            "base_commit": task["base_commit"],
+            "active_writer": task["active_writer"],
+            "owned_paths": json.loads(task["owned_paths_json"] or "[]"),
+            "revision": task["revision"],
+            "result": {
+                "verification_verdict": report["verification_verdict"],
+                "changed_files": report["changed_files"],
+                "commands": report["commands"],
+                "git_state": report["git_state"],
+                "skipped_checks": report["skipped_checks"],
+                "risks": report["risks"],
+                "next_safe_step": report["next_safe_step"],
+                "permission_state": {
+                    "commit": False,
+                    "push": False,
+                    "merge": False,
+                    "deployment": False,
+                    "live_enablement": False,
+                },
+            },
+        },
+    }
+
+
+def _result_readback_matches(row: sqlite3.Row, expected: dict) -> bool:
+    stored = json.loads(row["payload_json"])
+    scalar_fields = ("id", "sender", "recipient", "type", "subject", "body", "correlation_id")
+    if any(stored.get(field) != expected.get(field) for field in scalar_fields):
+        return False
+    route_fields = ("project_domain", "cloud_conversation_key", "local_lane", "authority")
+    return all(
+        stored["metadata"].get(field) == expected["metadata"].get(field)
+        for field in route_fields
+    ) and stored["metadata"].get("result") == expected["metadata"].get("result")
+
+
+def command_result(args: argparse.Namespace) -> int:
+    database = store()
+    task = database.get_message(args.task_id)
+    if task is None:
+        print("Görev bulunamadı")
+        return 1
+    if task["status"] != "processing" or task["active_writer"] != "chief-engineer":
+        print("Görev aktif Chief Engineer sahipliğinde değil")
+        return 1
+    if task["result_message_id"] is not None:
+        print(f"Görevin sonucu zaten üretildi: {task['result_message_id']}")
+        return 1
+    try:
+        report = parse_json_strict(Path(args.report).read_bytes())
+        if not isinstance(report, dict):
+            raise ValueError("Sonuç raporu JSON nesnesi olmalı")
+        message = _validate(_build_result(task, report))
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+        print(f"Geçersiz sonuç raporu: {error}")
+        return 1
+    existing_result = database.get_message(message["id"])
+    if existing_result is not None:
+        if existing_result["direction"] != "outbound":
+            print("Deterministik sonuç UUID'si inbound kayıtla çakışıyor")
+            return 1
+        if not _result_readback_matches(existing_result, message):
+            print("Mevcut deterministik sonuç içeriği yeni raporla eşleşmiyor")
+            return 1
+        try:
+            if not database.link_result(task["id"], message["id"]):
+                raise InvalidTransition("Mevcut sonuç görevle ilişkilendirilemedi")
+        except InvalidTransition as error:
+            print(f"Sonuç üretilemedi: {error}")
+            return 1
+        print(Path(unquote(urlparse(existing_result["source_uri"]).path)))
+        return 0
+    _private_dir(OUTBOX)
+    stamp = message["created_at"].replace("-", "").replace(":", "")
+    destination = OUTBOX / f"{stamp}__{message['id'][:8]}__response.json"
+    raw = (json.dumps(message, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    staging = destination.with_name("." + destination.name + ".tmp")
+    try:
+        staging.write_bytes(raw)
+        os.chmod(staging, 0o600)
+        os.replace(staging, destination)
+        database.put_message(message, "outbound", "queued", destination.resolve().as_uri(), raw)
+        readback = database.get_message(message["id"])
+        if readback is None or not _result_readback_matches(readback, message):
+            raise InvalidTransition("Sonuç yerel geri okumada doğrulanamadı")
+        if not database.link_result(task["id"], message["id"]):
+            raise InvalidTransition("Sonuç görevle atomik olarak ilişkilendirilemedi")
+    except (OSError, sqlite3.Error, IntegrityConflict, InvalidTransition) as error:
+        if staging.exists():
+            staging.unlink()
+        print(f"Sonuç üretilemedi: {error}")
+        return 1
+    print(destination)
+    return 0
+
+
 def command_recover(args: argparse.Namespace) -> int:
     database = store()
     if args.id:
@@ -275,6 +424,16 @@ def parser() -> argparse.ArgumentParser:
     claim_cmd.add_argument("--worker", required=True)
     claim_cmd.add_argument("--lease-seconds", type=int, default=300)
     claim_cmd.set_defaults(func=command_claim)
+    claim_task_cmd = commands.add_parser("claim-task")
+    claim_task_cmd.add_argument("--lane", required=True)
+    claim_task_cmd.add_argument("--base-commit", required=True)
+    claim_task_cmd.add_argument("--owned-path", action="append", required=True)
+    claim_task_cmd.add_argument("--lease-seconds", type=int, default=1800)
+    claim_task_cmd.set_defaults(func=command_claim_task)
+    result_cmd = commands.add_parser("result")
+    result_cmd.add_argument("task_id")
+    result_cmd.add_argument("--report", required=True)
+    result_cmd.set_defaults(func=command_result)
     recover_cmd = commands.add_parser("recover")
     recover_cmd.add_argument("--id")
     recover_cmd.add_argument("--reason", default="lease expired")

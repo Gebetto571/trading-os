@@ -56,6 +56,17 @@ alınır ve düzeltilmiş migration yeniden denenebilir.
 SQLite veritabanı ile varsa WAL/SHM yan dosyaları `0600`, yerel inbox, outbox,
 archive ve quarantine dizinleri `0700` izniyle tutulur.
 
+## Migration 004 — Chief Engineer hat ve dosya sahipliği
+
+`migrations/004_chief_engineer_ownership.sql`, proje değiştiren görevler için
+`revision`, `updated_by`, `base_commit`, `project_domain`, bulut/yerel hat,
+`authority`, `approval_state`, `active_writer`, `owned_paths`, sonuç hükmü ve
+sonuç mesajı bağlantısını ekler. `claim-task` yalnız kayıtlı, yerel uygulama için
+onaylı ve ilgili hatta bekleyen görevi atomik olarak alır. Aynı veya üst/alt klasör
+olarak örtüşen aktif dosya sahipliği varsa ikinci görev başlamaz. Genel mesaj
+trafiğinin mevcut `claim` yolu geriye dönük uyumluluk için korunur; proje dosyası
+değiştirme yetkisi vermez.
+
 ## Piyasa verisi PostgreSQL'i
 
 Mum verisi iletişim SQLite'ından ayrıdır. Ham dosyalar yerel `data/` altında,
