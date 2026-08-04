@@ -34,6 +34,13 @@ Mottomuz: “Hızlı çalışan, yükü az, pratik ve işlevsel çözümler üre
 - Mevcut Markdown dosyası bulunan sohbet; karar, tavsiye, bilgi, aktarım, yanıt ve durum kayıtlarını öncelikle o dosyaya tarihli bölüm olarak ekler.
 - Okundu, tamamlandı, kabul, küçük revizyon, kısa özet veya tek seferlik aktarım için ayrı Markdown dosyası oluşturma.
 - Yeni dosya yalnızca kullanıcı açıkça ayrı dosya isterse veya anayasanın bağımsız yaşam döngüsü, güvenlik, denetim ya da zorunlu kalıcılık istisnalarından biri varsa oluşturulur; Markdown dosyasına `creation_reason` yazılır.
+- Her yeni proje dosyası veya belge oluşturulduğunda oluşturan sohbet, aynı görevde
+  `docs-manager`a yol/Drive kimliği, tür, amaç, sahibi ve ilişkili mevcut belgeyi
+  bildirir. Bildirim yeni bir dosya veya ayrı kayıt değildir.
+- Kullanıcı “belgeleri senkron et” dediğinde `docs-manager`, bildirilen dosyalar için
+  kanonik sahiplik, mevcut belge ilişkisi, fihrist ve gerekli referansları uzlaştırır.
+  Bu işlem periyodik tarama, otomatik Drive eşitlemesi, otomatik commit veya yeni log
+  dosyası oluşturmaz.
 - Her yeni yönetilen Markdown dosyası, oluşturulduğu aynı işlem içinde TOS-DEC-004 belgesindeki Merkezi Markdown Fihristi’ne kaydedilir; sahibi, kullanan sohbetler, amacı, konumu ve oluşturma gerekçesi yazılır.
 - Dosya taşıma, yeniden adlandırma, arşivleme veya kapsam değişikliğinde yeni fihrist satırı açma; mevcut sicil kaydını güncelle.
 - `AGENTS.md`, TOS-DEC-004, sohbet sicili ve merkezi fihristte tek yazar `docs-manager` rolündeki ana ajandır. Alt ajanlar bu dosyalara doğrudan yazmaz; öneri ve kanıtlarını ana ajana iletir.

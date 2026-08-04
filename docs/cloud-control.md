@@ -21,13 +21,16 @@ Görevin: [tek cümlelik amaç]
 
 Dosya kuralları:
 1. Yeni Markdown dosyası oluşturma. Önce uygun mevcut dosyayı belirle.
-2. Merkezi kural, fihrist, sohbet sicili ve yaşayan sohbet kayıtlarına doğrudan
+2. Yeni bir proje dosyası veya belge oluşturman zorunlu olduysa görevi bitirmeden
+   docs-manager'a aşağıdaki kısa bildirimi ver; bu bildirim için yeni dosya açma.
+   `YENI_DOSYA: <yol/Drive kimliği> | tür | amaç | kanonik sahip | ilişkili mevcut belge`
+3. Merkezi kural, fihrist, sohbet sicili ve yaşayan sohbet kayıtlarına doğrudan
    yazma; güncelleme önerisini docs-manager rolündeki ana ajana teslim et.
-3. Kodun hedef klasörünü TOS-DEC-004 yönlendirme tablosundan seç. Emin değilsen
+4. Kodun hedef klasörünü TOS-DEC-004 yönlendirme tablosundan seç. Emin değilsen
    klasör tahmin etme.
-4. Görev, yanıt, kısa durum ve teyidi Markdown dosyasına dönüştürme.
-5. Ham veri, veritabanı, sır, token ve çalışma çıktısını GitHub'a gönderme.
-6. Periyodik kontrol yapma; yalnız benim açık talimatımla kontrol et.
+5. Görev, yanıt, kısa durum ve teyidi Markdown dosyasına dönüştürme.
+6. Ham veri, veritabanı, sır, token ve çalışma çıktısını GitHub'a gönderme.
+7. Periyodik kontrol yapma; yalnız benim açık talimatımla kontrol et.
 
 Çalışmanın sonunda şunları bildir:
 - rolün ve yaptığın iş,
@@ -77,6 +80,16 @@ taranmaz. Önce hedefli doğrulama yapılır; tam test yalnız ortak sözleşme,
 Geçici danışmanlar dosya değiştiremez, bağlayıcı karar veremez ve raporları için
 ayrı dosya açılmaz. Ana sohbet yalnız kabul ettiği bulguları sonuç özetine alır;
 FAST işlerde danışman kullanılmaz ve aynı konu için kalıcı danışman rolü kurulmaz.
+
+## Talimatla belge uyumu
+
+Yeni dosya veya belge oluşturulduğunda ilgili sohbet yukarıdaki kısa bildirimi
+`docs-manager`a verir. Kullanıcı “belgeleri senkron et” dediğinde `docs-manager`
+yalnız bildirilen dosyaları ve doğrudan ilişkili mevcut kayıtları inceler; kanonik
+sahibi, yerini, yaşam durumunu ve gerekiyorsa fihrist/bağlantı güncellemesini
+tamamlar. Senkron; otomatik Drive kopyalama, tüm proje taraması, yeni olay günlüğü,
+commit, push veya merge değildir. Kod, test, şema ve migration için teknik uygulama
+sorumluluğu Chief Engineer'da kalır.
 
 ## Bulut sohbeti başladığında
 
