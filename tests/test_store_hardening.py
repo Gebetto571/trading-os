@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import shutil
 import tempfile
 import threading
@@ -7,7 +8,10 @@ import uuid
 import os
 from pathlib import Path
 
-from trading_os_bridge.store import IntegrityConflict, InvalidTransition, OwnershipConflict, Store
+from trading_os_bridge.store import (
+    DISPOSABLE_MARKER, DISPOSABLE_MARKER_CONTENT, DisposableMigrationRequired,
+    IntegrityConflict, InvalidTransition, NotReversibleMigration, OwnershipConflict, Store,
+)
 
 
 MIGRATIONS = Path(__file__).parents[1] / "migrations"
@@ -45,6 +49,23 @@ class StoreHardeningTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def disposable_store(self, migrations=MIGRATIONS):
+        root = Path(tempfile.mkdtemp(dir=self.temp.name, prefix="trading-os-disposable-"))
+        (root / DISPOSABLE_MARKER).write_text(DISPOSABLE_MARKER_CONTENT, encoding="utf-8")
+        return Store(root / "fixture.db", migrations)
+
+    @staticmethod
+    def migration_snapshot(store):
+        with store.connect() as connection:
+            schema = [tuple(row) for row in connection.execute(
+                "SELECT type, name, tbl_name, sql FROM sqlite_master "
+                "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+            )]
+            versions = [row[0] for row in connection.execute(
+                "SELECT version FROM schema_migrations ORDER BY version"
+            )]
+        return {"schema": schema, "versions": versions}
 
     def test_duplicate_and_integrity_conflict(self):
         original = message()
@@ -301,6 +322,48 @@ class StoreHardeningTests(unittest.TestCase):
             ).fetchone())
             connection.execute("DROP TRIGGER reject_migration_5")
         self.assertEqual(candidate.migrate(), 1)
+
+    def test_disposable_down_migration_reverts_only_explicit_version_and_is_retryable(self):
+        first_three = Path(self.temp.name) / "migrations-v3"
+        first_three.mkdir()
+        for source in MIGRATIONS.glob("00[1-3]_*.sql"):
+            shutil.copyfile(source, first_three / source.name)
+        candidate = self.disposable_store(first_three)
+        self.assertEqual(candidate.migrate(), 3)
+        before = self.migration_snapshot(candidate)
+
+        upgraded = Store(candidate.database, MIGRATIONS)
+        self.assertEqual(upgraded.migrate(), 1)
+        self.assertEqual(upgraded.migrate_down_disposable(3), 1)
+        self.assertEqual(self.migration_snapshot(upgraded), before)
+
+        self.assertEqual(upgraded.migrate(), 1)
+        with upgraded.connect() as connection:
+            connection.execute(
+                """CREATE TRIGGER reject_revision_drop BEFORE DELETE ON schema_migrations
+                   WHEN OLD.version=4 BEGIN SELECT RAISE(ABORT, 'fixture guard'); END"""
+            )
+        guarded_before = self.migration_snapshot(upgraded)
+        with self.assertRaises(sqlite3.DatabaseError):
+            upgraded.migrate_down_disposable(3)
+        self.assertEqual(self.migration_snapshot(upgraded), guarded_before)
+        with upgraded.connect() as connection:
+            connection.execute("DROP TRIGGER reject_revision_drop")
+        self.assertEqual(upgraded.migrate_down_disposable(3), 1)
+        self.assertEqual(self.migration_snapshot(upgraded), before)
+
+    def test_down_migration_rejects_non_disposable_or_unsupported_target_without_mutation(self):
+        before = self.migration_snapshot(self.store)
+        with self.assertRaises(DisposableMigrationRequired):
+            self.store.migrate_down_disposable(3)
+        self.assertEqual(self.migration_snapshot(self.store), before)
+
+        candidate = self.disposable_store()
+        self.assertEqual(candidate.migrate(), 4)
+        disposable_before = self.migration_snapshot(candidate)
+        with self.assertRaises(NotReversibleMigration):
+            candidate.migrate_down_disposable(2)
+        self.assertEqual(self.migration_snapshot(candidate), disposable_before)
 
     def test_decision_versions(self):
         self.assertEqual(self.store.put_decision("DEC-X", "Title", "proposed", "v1"), 1)

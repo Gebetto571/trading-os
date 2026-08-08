@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlparse
@@ -24,6 +25,36 @@ class InvalidTransition(ValueError):
 
 class OwnershipConflict(ValueError):
     pass
+
+
+class DisposableMigrationRequired(ValueError):
+    pass
+
+
+class NotReversibleMigration(ValueError):
+    pass
+
+
+DISPOSABLE_MARKER = ".trading-os-disposable-fixture"
+DISPOSABLE_MARKER_CONTENT = "trading-os-disposable-fixture-v1\n"
+REVERSIBLE_DOWN_SQL = {
+    4: """
+DROP INDEX IF EXISTS idx_messages_active_writer;
+DROP INDEX IF EXISTS idx_messages_chief_engineer_claimable;
+ALTER TABLE messages DROP COLUMN result_message_id;
+ALTER TABLE messages DROP COLUMN verification_verdict;
+ALTER TABLE messages DROP COLUMN owned_paths_json;
+ALTER TABLE messages DROP COLUMN active_writer;
+ALTER TABLE messages DROP COLUMN approval_state;
+ALTER TABLE messages DROP COLUMN authority;
+ALTER TABLE messages DROP COLUMN local_lane;
+ALTER TABLE messages DROP COLUMN cloud_conversation_key;
+ALTER TABLE messages DROP COLUMN project_domain;
+ALTER TABLE messages DROP COLUMN base_commit;
+ALTER TABLE messages DROP COLUMN updated_by;
+ALTER TABLE messages DROP COLUMN revision;
+""",
+}
 
 
 TRANSITIONS = {
@@ -93,6 +124,55 @@ class Store:
         finally:
             self._secure_database_files()
         return applied
+
+    def _require_disposable_migration_fixture(self) -> None:
+        parent = self.database.parent.resolve()
+        temporary_root = Path(tempfile.gettempdir()).resolve()
+        try:
+            parent.relative_to(temporary_root)
+        except ValueError as error:
+            raise DisposableMigrationRequired("Down-migration yalnız geçici disposable fixture altında çalışabilir") from error
+        marker = parent / DISPOSABLE_MARKER
+        if not marker.is_file() or marker.read_text(encoding="utf-8") != DISPOSABLE_MARKER_CONTENT:
+            raise DisposableMigrationRequired("Disposable fixture marker doğrulanamadı")
+
+    def migrate_down_disposable(self, target_version: int) -> int:
+        """Revert only explicitly declared migrations in a marked temporary fixture."""
+        if isinstance(target_version, bool) or not isinstance(target_version, int) or target_version < 0:
+            raise ValueError("Hedef migration sürümü geçerli bir tam sayı olmalı")
+        self._require_disposable_migration_fixture()
+        reverted = 0
+        try:
+            with self.connect() as connection:
+                known = [row[0] for row in connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version DESC"
+                )]
+                if not known:
+                    raise NotReversibleMigration("Uygulanmış migration yok")
+                current_version = known[0]
+                if target_version >= current_version:
+                    raise ValueError("Hedef sürüm mevcut sürümden küçük olmalı")
+                versions = list(range(current_version, target_version, -1))
+                unsupported = [version for version in versions if version not in REVERSIBLE_DOWN_SQL]
+                if unsupported:
+                    raise NotReversibleMigration(
+                        f"Açık down SQL tanımı yok: {', '.join(map(str, unsupported))}"
+                    )
+                script = "BEGIN IMMEDIATE;\n"
+                for version in versions:
+                    script += REVERSIBLE_DOWN_SQL[version]
+                    script += f"DELETE FROM schema_migrations WHERE version = {version};\n"
+                script += "COMMIT;"
+                try:
+                    connection.executescript(script)
+                except Exception:
+                    if connection.in_transaction:
+                        connection.rollback()
+                    raise
+                reverted = len(versions)
+        finally:
+            self._secure_database_files()
+        return reverted
 
     def put_message(
         self, message: dict, direction: str, status: str, source_uri: str | None = None,
