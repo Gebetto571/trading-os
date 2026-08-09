@@ -3705,6 +3705,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "trading-os-execution-core"
+version = "0.1.0"
+
+[[package]]
 name = "trading-os-market-data"
 version = "0.1.0"
 dependencies = [
