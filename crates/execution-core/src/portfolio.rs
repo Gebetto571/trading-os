@@ -42,23 +42,31 @@ impl FundedSpotPortfolio {
     }
 
     pub(crate) fn reserve_btc(&mut self, amount: BtcAtoms) -> Option<()> {
-        self.available_btc = BtcAtoms::new(self.available_btc.get().checked_sub(amount.get())?);
-        self.reserved_btc = BtcAtoms::new(self.reserved_btc.get().checked_add(amount.get())?);
+        let available_btc = self.available_btc.get().checked_sub(amount.get())?;
+        let reserved_btc = self.reserved_btc.get().checked_add(amount.get())?;
+        self.available_btc = BtcAtoms::new(available_btc);
+        self.reserved_btc = BtcAtoms::new(reserved_btc);
         Some(())
     }
     pub(crate) fn release_btc(&mut self, amount: BtcAtoms) -> Option<()> {
-        self.reserved_btc = BtcAtoms::new(self.reserved_btc.get().checked_sub(amount.get())?);
-        self.available_btc = BtcAtoms::new(self.available_btc.get().checked_add(amount.get())?);
+        let reserved_btc = self.reserved_btc.get().checked_sub(amount.get())?;
+        let available_btc = self.available_btc.get().checked_add(amount.get())?;
+        self.reserved_btc = BtcAtoms::new(reserved_btc);
+        self.available_btc = BtcAtoms::new(available_btc);
         Some(())
     }
     pub(crate) fn reserve_usdt(&mut self, amount: UsdtAtoms) -> Option<()> {
-        self.available_usdt = UsdtAtoms::new(self.available_usdt.get().checked_sub(amount.get())?);
-        self.reserved_usdt = UsdtAtoms::new(self.reserved_usdt.get().checked_add(amount.get())?);
+        let available_usdt = self.available_usdt.get().checked_sub(amount.get())?;
+        let reserved_usdt = self.reserved_usdt.get().checked_add(amount.get())?;
+        self.available_usdt = UsdtAtoms::new(available_usdt);
+        self.reserved_usdt = UsdtAtoms::new(reserved_usdt);
         Some(())
     }
     pub(crate) fn release_usdt(&mut self, amount: UsdtAtoms) -> Option<()> {
-        self.reserved_usdt = UsdtAtoms::new(self.reserved_usdt.get().checked_sub(amount.get())?);
-        self.available_usdt = UsdtAtoms::new(self.available_usdt.get().checked_add(amount.get())?);
+        let reserved_usdt = self.reserved_usdt.get().checked_sub(amount.get())?;
+        let available_usdt = self.available_usdt.get().checked_add(amount.get())?;
+        self.reserved_usdt = UsdtAtoms::new(reserved_usdt);
+        self.available_usdt = UsdtAtoms::new(available_usdt);
         Some(())
     }
     pub(crate) fn apply_buy(
@@ -67,20 +75,20 @@ impl FundedSpotPortfolio {
         cost: UsdtAtoms,
         released: UsdtAtoms,
     ) -> Option<()> {
-        self.reserved_usdt = UsdtAtoms::new(
-            self.reserved_usdt
-                .get()
-                .checked_sub(cost.get().checked_add(released.get())?)?,
-        );
-        self.available_usdt =
-            UsdtAtoms::new(self.available_usdt.get().checked_add(released.get())?);
-        self.available_btc = BtcAtoms::new(self.available_btc.get().checked_add(base.get())?);
+        let reserved_cost = cost.get().checked_add(released.get())?;
+        let reserved_usdt = self.reserved_usdt.get().checked_sub(reserved_cost)?;
+        let available_usdt = self.available_usdt.get().checked_add(released.get())?;
+        let available_btc = self.available_btc.get().checked_add(base.get())?;
+        self.reserved_usdt = UsdtAtoms::new(reserved_usdt);
+        self.available_usdt = UsdtAtoms::new(available_usdt);
+        self.available_btc = BtcAtoms::new(available_btc);
         Some(())
     }
     pub(crate) fn apply_sell(&mut self, base: BtcAtoms, proceeds: UsdtAtoms) -> Option<()> {
-        self.reserved_btc = BtcAtoms::new(self.reserved_btc.get().checked_sub(base.get())?);
-        self.available_usdt =
-            UsdtAtoms::new(self.available_usdt.get().checked_add(proceeds.get())?);
+        let reserved_btc = self.reserved_btc.get().checked_sub(base.get())?;
+        let available_usdt = self.available_usdt.get().checked_add(proceeds.get())?;
+        self.reserved_btc = BtcAtoms::new(reserved_btc);
+        self.available_usdt = UsdtAtoms::new(available_usdt);
         Some(())
     }
 }

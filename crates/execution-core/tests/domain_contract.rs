@@ -159,6 +159,40 @@ fn overfill_is_atomic_and_correctable_at_the_same_sequence() {
     assert_eq!(corrected.effects.len(), 3);
 }
 
+#[test]
+fn duplicate_intent_and_fill_are_fail_closed_without_changing_canonical_state() {
+    let submitted = reduce(
+        &EngineState::new(spec()),
+        &submit_limit(1, 1, Side::Buy, 100, 1),
+    )
+    .unwrap()
+    .state;
+    let submitted_before = submitted.clone();
+    let submitted_bytes = submitted.canonical_bytes();
+    let submitted_hash = submitted.state_hash();
+    assert!(matches!(
+        reduce(&submitted, &submit_limit(2, 1, Side::Buy, 100, 1)),
+        Err(EngineError::DuplicateIntentId { .. })
+    ));
+    assert_eq!(submitted, submitted_before);
+    assert_eq!(submitted.canonical_bytes(), submitted_bytes);
+    assert_eq!(submitted.state_hash(), submitted_hash);
+
+    let filled = reduce(&submitted, &fill_order(2, 9, 1, Side::Buy, 100, 1))
+        .unwrap()
+        .state;
+    let filled_before = filled.clone();
+    let filled_bytes = filled.canonical_bytes();
+    let filled_hash = filled.state_hash();
+    assert!(matches!(
+        reduce(&filled, &fill_order(3, 9, 1, Side::Buy, 100, 1)),
+        Err(EngineError::DuplicateFill { .. })
+    ));
+    assert_eq!(filled, filled_before);
+    assert_eq!(filled.canonical_bytes(), filled_bytes);
+    assert_eq!(filled.state_hash(), filled_hash);
+}
+
 fn funded_state() -> EngineState {
     funded_state_with(0, 200, limits(Some(2), Some(2), Some(200)))
 }

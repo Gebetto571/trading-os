@@ -561,8 +561,35 @@ impl ExecutionCore {
         self.state.state_hash()
     }
     pub fn accept(&mut self, input: &EngineInput) -> Result<(), EngineError> {
-        let transition = reduce(&self.state, input)?;
-        self.state = transition.state;
+        match input.message {
+            CoreMessage::External(ExternalEvent::MarketTrade(trade)) => {
+                self.accept_market_trade(input, trade)
+            }
+            _ => {
+                let transition = reduce(&self.state, input)?;
+                self.state = transition.state;
+                Ok(())
+            }
+        }
+    }
+
+    // Market data is the high-frequency mutable entrypoint. It changes only the
+    // last price and acceptance provenance, so validate before mutating and avoid
+    // constructing a full immutable transition solely for this compatibility API.
+    fn accept_market_trade(
+        &mut self,
+        input: &EngineInput,
+        trade: crate::event::MarketTrade,
+    ) -> Result<(), EngineError> {
+        validate_sequence(&self.state, input.engine_seq)?;
+        self.state
+            .last_market_prices
+            .insert(trade.instrument, trade.price);
+        self.state.last_engine_seq = Some(input.engine_seq);
+        self.state.last_provenance = Some(input.provenance());
+        self.state.virtual_clock = Some(VirtualClock::from_source_event_time(
+            input.source_event_time,
+        ));
         Ok(())
     }
 }
@@ -1032,6 +1059,26 @@ mod tests {
         }
         assert_eq!(state, *core.state());
         assert_eq!(state.state_hash(), core.state_hash());
+    }
+
+    #[test]
+    fn market_trade_fast_path_matches_reduce_and_keeps_rejection_atomic() {
+        let input = market_input(7, 200, 100);
+        let expected = reduce(&EngineState::new(spec()), &input).unwrap();
+        let mut core = ExecutionCore::new(spec());
+
+        core.accept(&input).unwrap();
+        assert_eq!(*core.state(), expected.state);
+
+        let before_rejection = core.clone();
+        assert_eq!(
+            core.accept(&market_input(9, 300, 101)),
+            Err(EngineError::UnexpectedSequence {
+                expected: EngineSeq::new(8),
+                received: EngineSeq::new(9),
+            })
+        );
+        assert_eq!(core, before_rejection);
     }
 
     #[test]
