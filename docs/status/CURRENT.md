@@ -90,34 +90,37 @@ Bu temizlikte kod, CI veya performans optimizasyonu uygulanmadı. Ayrı backlog:
 
 ## Kapsam ve yaşayan belge hizalaması — 2026-08-21
 
-Son anlam/kural incelemesinde ilk aktif ürün ve adaptör Binance Global BTCUSDT
-spot olarak sabitlendi. Adaptör public/private akış, LIMIT GTC yaşam döngüsü,
-bakiye/fill mutabakatı, reconnect/backfill ve rate-limit/error mapping ile
-sınırlıdır; strateji veya risk kuralı taşımaz. İlk strateji yönü price-action
-araştırmasıdır ve `hipotez → veri kalite testi → causal event study → walk-forward
-→ holdout → replay → PAPER → LIVE_CANARY → sınırlı LIVE` kanıt sırasına bağlıdır.
-Kanıtlanmış strateji ve ayrı kabul kartı olmadan PAPER, LIVE_CANARY ve LIVE kapalıdır.
-XAU/USD ayrı ürün/adaptör kararıyla ikincil; BTCUSDT isolated margin spot production
-kanıtı ve ayrı margin kararı sonrasıdır. Perpetual, futures, cross margin ve
-BIST/hisse aktif ilk yol haritasında değildir.
+İlk aktif ürün ve adaptör Binance Global BTCUSDT spot olarak sabitlendi. Adaptör
+public/private akış, LIMIT GTC yaşam döngüsü, bakiye/fill mutabakatı,
+reconnect/backfill ve rate-limit/error mapping ile sınırlıdır; strateji veya risk
+kuralı taşımaz. İlk strateji yönü price-action araştırmasıdır. Kanıtlanmış strateji
+ve ayrı kabul kartı olmadan PAPER, LIVE_CANARY ve LIVE kapalıdır. XAU/USD ayrı
+ürün/adaptör disposition kararıyla ikincil; BTCUSDT isolated margin ise kabul
+edilmiş spot production kanıtı ve ayrı margin kararından sonraki koşullu hedeftir.
 
-Yerel `README.md`, `docs/architecture.md` ve `sources/preview.md` bu sınırlarla
-uyumlandı. `TOS-CHAT-REGISTRY` eski örneği nötrleştirilmiş adapter örneği olarak
-tutuyor; `TOS-DEC-004` MD-004/MD-025'i external-sync ve `MD-026`yı
-`proposed / branch-only` olarak kaydediyor. `sources/` yerel ayna değil dış
-eşitleme sahibi olduğundan, upstream sürüm korunmadan yerel metin kanonik kabul
-edilmez.
+Drive'daki TOS-DEC-001 v0.2, TOS-DEC-004 v2.1, sohbet sicili v1.7, Task Tree v1.2,
+Chief Engineer Packs v1.1 ve tarihsel araştırma raporu kullanıcı onayıyla yerinde
+güncellendi; Master Blueprint v1.1 ve Roadmap v1.1 ile birlikte ham-byte geri
+okumada eski ürün/sağlayıcı kalıntısı bulunmadı. TOS-DEC-001 v0.2 geri okuma
+SHA-256 değeri `88f7aa28e5a4fe79b346d22d5bdcd866a480077e95ee89c598cfc34f6cd461b2`dir.
+ChatGPT projesine bağlı `03_KARARLAR` Drive klasörü yeniden eşitlemeye alındı;
+arayüz işlemi `kısmi senkronizasyon` olarak bildirdi. Yerel `sources/preview.md`
+dış-eşitleme sahibindeki salt-okunur aynadır; güncel aynanın ham SHA-256 değeri
+`4d1e8663f57d652bbbce807a4b595dabec6882c8fb8f9a5d5de88f08f7defe5b` olup
+doğrudan ve anlamsal kalıntı taraması temizdir. Drive kararı ile yerel aynanın
+byte-for-byte aynı olması sahiplik kuralı değildir; sonraki dış eşitlemede aynı
+sıfır-kalıntı taraması tekrarlanacaktır.
 
-Drive'daki Master Blueprint, Task Tree, Roadmap ve Chief Engineer Packs tarandı;
-yasaklı marka veya eski ürün terimi bulunmadı. Blueprint'te BTCUSDT bağlamı
-mevcut olsa da bu turdaki XAU/USD ve price-action ayrıntıları henüz yansımamıştır.
-Blueprint'i aynı ürün sırası ve adaptör sınırıyla güncelleme girişimi güvenlik
-katmanı tarafından reddedildi; dış belgeye tam içerik yüklemesi için ayrıca açık
-hedef/payload onayı gerekir. Bu nedenle Drive belgesi taranmış, ancak güncelleme
-başarılı gibi gösterilmemiştir.
+`TOS-WORKGRAPH-001@2.0` değiştirilmedi: 102 görev, 246 bağımlılık, sıfır çevrim ve
+SHA-256 `8589142094750f01106fcf02583f69452522ff8779c60f8c0a095cf2e1e4c11f`.
+İçindeki eski `@1.0` otorite referansları değişmez derleme provenance'ıdır; güncel
+ürün ve strateji anlamını TOS-DEC-001 v0.2 ile geri okunmuş Blueprint, Task Tree,
+Roadmap ve Packs sürümleri belirler. F7'deki ikinci hedef yalnız BTCUSDT ürün hattını
+anlatır; global ürün sırası değildir.
 
-Workgraph doğrulaması dış salt-okunur geri okumada `TOS-WORKGRAPH-001`, revision
-`2.0`, `DRAFT`, 102 görev, 246 bağımlılık, çevrimsiz DAG ve SHA-256
-`8589142094750f01106fcf02583f69452522ff8779c60f8c0a095cf2e1e4c11f` olarak
-kaydedildi; `var/lcos` yerel aynası yoktur. Bu görevde kod, CI veya performans
-optimizasyonu uygulanmadı; P0–P5 backlog'u yukarıdaki bölümde korunur.
+Kapanış doğrulamasında Rust format, workspace check ve Clippy; execution-core'un
+51 testi; sağlıklı yerel PostgreSQL ile market-data'nın 50 testi; kök Python
+yönetişim/köprü paketinin 72 testi ve geçici izole ortamda research engine'in 38
+testi geçti. Aktif kod, bağımlılık, ayar, kimlik bilgisi, uç nokta, görev ve yaşayan
+belgelerde eski kapsam izi bulunmadı. Bu görevde kod, CI, veri şeması veya performans
+optimizasyonu uygulanmadı; P0–P5 mimari takip maddeleri ayrı backlog olarak kaldı.

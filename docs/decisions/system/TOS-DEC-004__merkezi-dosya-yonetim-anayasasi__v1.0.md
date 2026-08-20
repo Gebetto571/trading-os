@@ -2,9 +2,9 @@
 id: TOS-DEC-004
 title: Merkezi Dosya Yönetim Anayasası
 status: sealed
-version: 1.9
+version: 2.1
 date: 2026-08-03
-last_updated: 2026-08-20
+last_updated: 2026-08-21
 authority: project-constitution
 scope:
   - all-chats
@@ -68,6 +68,28 @@ Yeni dosya yalnızca aşağıdaki gerekçelerden en az biri varsa açılabilir:
 6. Mevcut dosyaya eklemek belgenin amacını belirgin biçimde bozacak veya kullanılmasını güçleştirecek.
 
 Yeni Markdown dosyasında kısa bir `creation_reason` alanı bulunur ve yukarıdaki gerekçelerden hangisinin uygulandığı belirtilir. “Düzenli görünmesi” veya “ileride lazım olabilir” tek başına yeterli gerekçe değildir.
+
+### 5.1. Yeni dosya bildirimi ve talimatla belge uyumu
+
+Her yeni proje dosyası veya belge oluşturulduğunda oluşturan sohbet, aynı görevde
+`docs-manager`a şu kısa bildirimi verir: `yol veya Drive kimliği`, `tür`, `amaç`,
+`kanonik sahip`, `ilişkili mevcut belge` ve varsa `oluşturma gerekçesi`. Bildirim
+kendi başına yeni Markdown, ayrı aktarım günlüğü veya yeni fihrist satırı değildir.
+
+Kullanıcı “belgeleri senkron et” dediğinde `docs-manager` yalnız bildirilen dosyalar
+ve doğrudan ilişkili mevcut kayıtlar için şunları yapar:
+
+1. kanonik sahibi, konumu ve yaşam durumunu doğrular;
+2. uygun mevcut belgeye ilişkiyi ekler veya günceller;
+3. yönetilen Markdown ise bu anayasanın fihrist kuralını, başka dosya ise yalnız
+   gerekli sahiplik/referans kaydını uygular;
+4. çelişki, gereksiz kopya veya yanlış yol varsa kullanıcıya çözüm önerisi verir.
+
+Bu uyum işlemi otomatik veya periyodik tarama değildir; Drive–Git arasında otomatik
+kopyalama yapmaz, yeni servis ya da kayıt sistemi kurmaz ve açık yetki olmadan
+silme, commit, push, PR veya merge gerçekleştirmez. Kaynak kodu, test, şema,
+migration ve çalışan sistem değişikliklerinin teknik uygulanması Chief Engineer'ın
+sorumluluğunda kalır.
 
 ## 6. Yeni dosya oluşturulmayacak durumlar
 
@@ -368,6 +390,8 @@ Fihrist güncellenemiyorsa zorunlu olmayan yeni Markdown dosyası oluşturulmaz.
 
 `.git`, `target`, `build`, `dist`, `node_modules`, `vendor`, önbellek ve benzeri klasörlerde araçlar veya bağımlılıklar tarafından otomatik üretilen Markdown dosyaları fihriste alınmaz. Salt okunur ve otomatik eşitlenen `sources/` içeriği tek tek yönetilmez; kaynak grubu olarak gösterilebilir.
 
+MD-004 kimliği anayasa öncesi kökenli tarihsel bir karardır; mevcut TOS-DEC-001 v0.2 Drive kaydı active / external-sync durumundadır. Yerel `sources/preview.md` yalnızca salt-okunur eşitleme aynasıdır.
+
 ## 12. Merkezi Markdown Fihristi
 
 | Sicil | Belge | Kanonik konum | Sahip / kullananlar | Amaç / kapsam | Oluşturma gerekçesi | Yaşam / erişim | Git kanıtı | Tarih | İlişki |
@@ -375,17 +399,17 @@ Fihrist güncellenemiyorsa zorunlu olmayan yeni Markdown dosyası oluşturulmaz.
 | MD-001 | `BASLANGIC-BURADAN.md` | Drive `00_KONTROL_MERKEZI/` | docs-manager / all-chats | Drive yapay zekâ hafızası ve koordinasyon başlangıç kartı | Mevcut Drive kontrol belgesi | active / external-sync | not-applicable | legacy-unknown / 2026-08-04 | MD-007, MD-017, MD-021 |
 | MD-002 | `README.md` | Git kökü | codex-dev / all-chats | Yazılım başlangıcı | legacy/pre-constitution | active / main | `709e3c6` | legacy-unknown / 2026-08-04 | MD-020 |
 | MD-003 | `AGENTS.md` | Git kökü | docs-manager / all-chats | Bağlayıcı ajan, ilk rol ve belge yönlendirme talimatı | legacy/pre-constitution | active / main | `709e3c6` | legacy-unknown / 2026-08-04 | MD-007, MD-008, MD-021 |
-| MD-004 | `TOS-DEC-001__bot-calisma-sistemi-ve-karlilik-disiplini__v0.2.md` | `sources/preview.md` salt okunur yerel kaynak | external-sync / cloud-planner,codex-dev | Bot ve kârlılık kararı | legacy/pre-constitution | active / external-sync | `not-applicable` | legacy-unknown / 2026-08-20 | MD-025 |
+| MD-004 | `TOS-DEC-001__bot-calisma-sistemi-ve-karlilik-disiplini__v0.2.md` | Drive `03_KARARLAR/00_SISTEM_KURALLARI/`; `sources/preview.md` salt okunur eşitleme aynası | external-sync / cloud-planner,codex-dev | Bot, kârlılık, BTCUSDT spot ürün/araştırma ve güvenlik kararı | legacy/pre-constitution | active / external-sync | not-applicable | legacy-unknown / 2026-08-21 | MD-025, MD-027–MD-030 |
 | MD-005 | `TOS-DEC-002__bulut-chatgpt-codex-kodlama-is-akisi__v1.0.md` | `docs/decisions/` | docs-manager / cloud-planner,codex-dev | Bulut–Codex akışı | legacy/pre-constitution | active / main | `main@3e20207` | legacy-unknown / 2026-08-03 | MD-017, MD-020 |
 | MD-006 | `TOS-DEC-003__sohbet-karar-ve-iletisim-kayit-sistemi__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | Tarihsel iletişim modeli | legacy/pre-constitution | reference / main | `main@3e20207` | legacy-unknown / 2026-08-03 | superseded-in-part by MD-007 |
-| MD-007 | `TOS-DEC-004__merkezi-dosya-yonetim-anayasasi__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | Dosya anayasası, klasör ve sohbet–belge yönlendirmesi ile fihrist | Kullanıcı tarafından merkezi yönetişim istendi | active / main | `709e3c6` | 2026-08-03 / 2026-08-04 | supersedes MD-006,011,012,013 |
-| MD-008 | `TOS-CHAT-REGISTRY__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | İlk rol kaynağı, sohbet sicili ve ana belge ilişki matrisi | Sohbetler arası izlenebilirlik | active / main | `709e3c6` | 2026-08-03 / 2026-08-04 | MD-003, MD-007, MD-021 |
+| MD-007 | `TOS-DEC-004__merkezi-dosya-yonetim-anayasasi__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | Dosya anayasası, klasör ve sohbet–belge yönlendirmesi ile fihrist | Kullanıcı tarafından merkezi yönetişim istendi | active / main | `709e3c6` | 2026-08-03 / 2026-08-21 | supersedes MD-006,011,012,013; registers MD-026–MD-031 |
+| MD-008 | `TOS-CHAT-REGISTRY__v1.0.md` | `docs/decisions/system/` | docs-manager / all-chats | İlk rol kaynağı, sohbet sicili ve ana belge ilişki matrisi | Sohbetler arası izlenebilirlik | active / main | `709e3c6` | 2026-08-03 / 2026-08-21 | MD-003, MD-007, MD-021, MD-026–MD-031 |
 | MD-009 | `TOS-CHATDEC-20260803-001__docs-manager__sohbet-iletisim-log-sistemi.md` | `docs/decisions/chats/` | docs-manager / docs-manager,all-chats | Tarihsel docs-manager kararı | legacy/pre-constitution | reference / main | `main@0de5589` | 2026-08-03 / 2026-08-03 | superseded-in-part by MD-007 |
 | MD-010 | `TOS-CHATDEC-20260803-002__codex-dev__btcusdt-veri-katmani.md` | `docs/decisions/chats/` | codex-dev / codex-dev,cloud-planner | BTCUSDT yaşayan kararı | Bağımsız yazılım bileşeni kararı | active / main | `main@983712d` | 2026-08-03 / 2026-08-03 | MD-015, MD-024 |
 | MD-011 | `TOS-XFER-20260803-001__docs-manager__all-chats__policy.md` | `docs/communication-log/` | docs-manager / all-chats | Tarihsel ilk aktarım | legacy/pre-constitution | reference / main | `main@0de5589` | 2026-08-03 / 2026-08-03 | superseded by MD-007 |
 | MD-012 | `TOS-TPL-001__sohbet-karari-sablonu.md` | `docs/decisions/templates/` | docs-manager / all-chats | Tarihsel karar şablonu | legacy/pre-constitution | reference / main | `main@0de5589` | 2026-08-03 / 2026-08-03 | MD-006, MD-007 |
 | MD-013 | `TOS-TPL-002__sohbetler-arasi-aktarim-sablonu.md` | `docs/decisions/templates/` | docs-manager / all-chats | Tarihsel aktarım şablonu | legacy/pre-constitution | reference / main | `main@0de5589` | 2026-08-03 / 2026-08-03 | MD-006, MD-007 |
-| MD-014 | `architecture.md` | `docs/` | docs-manager / cloud-planner,codex-dev | Sistem mimarisi | Bağımsız teknik ana belge | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-015, MD-016 |
+| MD-014 | `architecture.md` | `docs/` | docs-manager / cloud-planner,codex-dev | Sistem mimarisi | Bağımsız teknik ana belge | active / main | `main@0de5589` | legacy-unknown / 2026-08-21 | MD-015, MD-016, MD-027–MD-030 |
 | MD-015 | `market-data.md` | `docs/architecture/` | docs-manager / cloud-planner,codex-dev | Piyasa verisi mimarisi | Bağımsız yazılım bileşeni | active / main | `main@3d5f0bc` | 2026-08-03 / 2026-08-03 | MD-010, MD-024 |
 | MD-016 | `database.md` | `docs/` | codex-dev / cloud-planner,codex-dev | Veritabanı tasarımı | Bağımsız teknik ana belge | active / main | `main@0de5589` | legacy-unknown / 2026-08-03 | MD-014, MD-020 |
 | MD-017 | `communication-protocol.md` | `docs/` | docs-manager / all-chats | Bulut–Codex kullanıcı devir protokolü | Bağımsız iletişim sözleşmesi | active / main | `709e3c6` | legacy-unknown / 2026-08-04 | MD-005, MD-020 |
@@ -396,8 +420,13 @@ Fihrist güncellenemiyorsa zorunlu olmayan yeni Markdown dosyası oluşturulmaz.
 | MD-022 | `security.md` | `docs/` | docs-manager / all-chats | Güvenlik politikası | Ayrı güvenlik sorumluluğu | active / main | `main@3e20207` | legacy-unknown / 2026-08-03 | MD-003, MD-020 |
 | MD-023 | `CURRENT.md` | `docs/status/` | docs-manager / all-chats | Tekil güncel durum | Yaşayan durum kaydı | active / main | `709e3c6` | 2026-08-03 / 2026-08-04 | MD-024 |
 | MD-024 | `2026-08-03-btcusdt-data-integrity.md` | `docs/reports/` | docs-manager / cloud-planner,codex-dev | BTCUSDT bütünlük kanıtı | Bağımsız doğrulama raporu | active / main | `main@3d5f0bc` | 2026-08-03 / 2026-08-03 | MD-010, MD-015, MD-023 |
-| MD-025 | `sources/` Markdown grubu | `sources/` | external-sync / all-chats | Salt okunur kaynak aynası | Dış sistem eşitlemesi | reference / external-sync | `not-applicable` | legacy-unknown / 2026-08-20 | MD-004 |
-| MD-026 | `TOS-DEC-005__exact-scope-allocation__v1.0.md` | `docs/decisions/system/` | docs-manager / chief-engineer/00,engine/01,test-risk/04 | TOS-PACK-20260806-001 için on exact execution-core path'in tekil teknik sahipliği | Genel klasör sahipliği, ortak contract ile lane sınırlarını dosya bazında çözmez | proposed / branch-only | `not-applicable` | 2026-08-09 / 2026-08-20 | supersedes conflicting scope allocation only for its ten exact paths; MD-007 |
+| MD-025 | `sources/` Markdown grubu | `sources/` | external-sync / all-chats | Salt okunur kaynak aynası | Dış sistem eşitlemesi | reference / external-sync | not-applicable | legacy-unknown / 2026-08-21 | MD-004 |
+| MD-026 | `TOS-DEC-005__exact-scope-allocation__v1.0.md` | `docs/decisions/system/` | docs-manager / chief-engineer/00,engine/01,test-risk/04 | TOS-PACK-20260806-001 için on exact execution-core path'in tekil teknik sahipliği | Genel klasör sahipliği, ortak contract ile lane sınırlarını dosya bazında çözmez | proposed / branch-only | not-applicable | 2026-08-09 / 2026-08-21 | supersedes conflicting scope allocation only for its ten exact paths; MD-007 |
+| MD-027 | `TOS-MASTER-BLUEPRINT.md` v1.1 | Drive `03_KARARLAR/03_BAGLI_BELGELER/` | docs-manager / cloud-planner,codex-dev,chief-engineer | BTCUSDT spot ilk ürün/adaptör; price-action araştırması; XAU ve margin karar kapıları | Ayrı yaşayan ana mimari uygulama kaynağı | active / external-sync | not-applicable | 2026-08-08 / 2026-08-21 | MD-004, MD-014, MD-015, MD-028–MD-030 |
+| MD-028 | `TOS-TASK-TREE.md` v1.2 | Drive `03_KARARLAR/03_BAGLI_BELGELER/` | docs-manager / chief-engineer,codex-dev,cloud-planner | Küçük, bağımlı ve test edilebilir görev ağacı; XAU disposition kapısı | Ayrı görev topolojisi ve uygulama kabul kaynağı | active / external-sync | not-applicable | 2026-08-08 / 2026-08-21 | MD-027, MD-029, MD-030 |
+| MD-029 | `TOS-ROADMAP.md` v1.1 | Drive `03_KARARLAR/03_BAGLI_BELGELER/` | docs-manager / chief-engineer,codex-dev,cloud-planner | Faz, kritik yol ve BTCUSDT spot → XAU kararı → isolated-margin ilerleme sırası | Görev ayrıntısından bağımsız yönetilebilir faz ve karar kapısı kaynağı | active / external-sync | not-applicable | 2026-08-08 / 2026-08-21 | MD-027, MD-028, MD-030 |
+| MD-030 | `TOS-CHIEF-ENGINEER-PACKS.md` v1.1 | Drive `03_KARARLAR/03_BAGLI_BELGELER/` | docs-manager / chief-engineer,codex-dev | Küçük coder paketleri, XAU karar-only pack'i, yetki ve teslim sözleşmeleri | Master planı dar ve doğrulanabilir uygulama briflerine dönüştürmek | active / external-sync | not-applicable | 2026-08-08 / 2026-08-21 | MD-027–MD-029 |
+| MD-031 | `Trading OS Format Evrimi, Araştırma Motoru ve Kalıntısız Geçiş Tasarımı.md` | Drive `05_RAPORLAR/` | docs-manager / cloud-planner | Format, araştırma motoru ve migration Ar-Ge raporu | Bağımsız migration/purge yaşam döngülü araştırma raporu | superseded / external-sync | not-applicable | 2026-08-06 / 2026-08-21 | MD-004, MD-007, MD-027–MD-030 |
 
 Yeni sicil kimliği, fihristteki en yüksek doğrulanmış sayının bir fazlasıdır; metinde sabit bir “sıradaki numara” tutulmaz. Bir satırın fihriste eklenmesi belgenin içeriğinin doğruluğunu onaylamaz; yalnız varlığını, amacını, yaşam döngüsünü ve sorumluluğunu kayıt altına alır.
 
@@ -416,7 +445,9 @@ Değişiklik için:
 
 | Tarih | Sürüm | Değişiklik | Onay |
 |---|---:|---|---|
-| 2026-08-20 | 1.9 | MD-004 ve MD-025 dış eşitleme/salt okunur sahipliği korunarak geçici çalışma ağacı kanıtları kaldırıldı; MD-026, Git tarafından izlenmeyen dosya durumuna uygun olarak `proposed / branch-only` yapıldı. | Kullanıcının açık kapsam yetkisi ve belge-yolu denetimi |
+| 2026-08-21 | 2.1 | MD-004/MD-025 dış kaynak ve salt-okunur ayna sahipliğiyle birleştirildi; MD-026 önceki açık kullanıcı kararına uygun proposed/branch-only tutuldu; Blueprint, Task Tree, Roadmap ve Packs MD-027–MD-030 olarak external-sync kaydedildi; yerine geçen Ar-Ge raporu MD-031 olarak kapatıldı. | Kullanıcının açık hizalama talimatı ve belge/anlam denetimi |
+| 2026-08-08 | 2.0 | BTCUSDT spot master blueprint, task-tree, roadmap ve Chief Engineer pack belgeleri ilk kez merkezi fihriste alındı; kaldırılan eski kapsam tarihsel/superseded duruma geçirildi. | Kullanıcının master-plan ve kapsam talimatı |
+| 2026-08-04 | 1.9 | Her yeni dosya için docs-manager bildirimi ve yalnız kullanıcı “belgeleri senkron et” dediğinde çalışan sade belge uyum akışı eklendi. | Kullanıcı talimatı |
 | 2026-08-04 | 1.8 | Google Drive güncel yapay zekâ hafızası ve koordinasyon katmanı olarak yeniden tanımlandı; eski Drive kod deposu yasağı korunarak tek kanonik sahip, yayın kopyası, görev–sonuç ve olay bazlı doğrulama kuralları mühürlendi. | Kullanıcı talimatı ve Drive klasör doğrulaması |
 | 2026-08-03 | 1.7 | Yerel belge hattı ile Chief Engineer yazılım hattı ayrıldı; TOS-DEC karar eşiği ve kanıtlanmış fihrist sahiplikleri sade tek-yazar düzenine alındı. | Kullanıcı talimatı |
 | 2026-08-03 | 1.6 | Kanonik yerel depo yolu yeniden doğrulandı; eski Drive yolları geçersiz, GitHub deposunun güncel görünürlüğü public olarak mühürlendi. | Kullanıcı talimatı ve canlı doğrulama |
