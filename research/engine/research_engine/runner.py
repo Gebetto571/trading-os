@@ -106,6 +106,8 @@ def run_experiment(config_path: Path) -> RunOutcome:
     )
     elapsed_ns = max(1, time.perf_counter_ns() - started_perf_ns)
     telemetry = _telemetry(snapshot.row_count, elapsed_ns)
+    telemetry["sqlite_read_elapsed_ns"] = durable.sqlite_read_elapsed_ns
+    telemetry["sqlite_write_elapsed_ns"] = durable.sqlite_write_elapsed_ns
     return RunOutcome(
         canonical_summary=durable.canonical_summary,
         result_artifact_id=durable.result_artifact_id,

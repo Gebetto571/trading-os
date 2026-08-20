@@ -24,6 +24,7 @@ _ALLOWED_IMPORT_ROOTS = {
     "resource",
     "sqlite3",
     "stat",
+    "tempfile",
     "time",
     "typing",
 }

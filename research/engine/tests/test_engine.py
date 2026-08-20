@@ -25,7 +25,7 @@ from research_engine.errors import (
     RegistryBusy,
     RuntimeBoundaryError,
 )
-from research_engine.hashing import sha256_file
+from research_engine.hashing import canonical_bytes, sha256_bytes, sha256_file
 from research_engine.registry import ExperimentRegistry
 from research_engine.runner import run_experiment
 
@@ -223,7 +223,7 @@ class EngineAcceptanceTests(unittest.TestCase):
                     config_sha256="c" * 64,
                     started_at_ns=1,
                     finished_at_ns=2,
-                    result_artifact_id="f" * 64,
+                    result_artifact_id=sha256_bytes(canonical_bytes({"result": "stable"})),
                     canonical_summary={"result": "stable"},
                 )
         finally:
