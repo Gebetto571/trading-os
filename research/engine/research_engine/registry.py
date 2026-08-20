@@ -33,6 +33,18 @@ _DISPOSABLE_MARKER_CONTENT = "research-engine-disposable-lineage-fixture-v1\n"
 _REGISTRY_MIGRATION = "001_experiment_registry.sql"
 _LINEAGE_MIGRATION = "002_lineage_foundation.sql"
 _COMPATIBILITY_MIGRATION = "003_lineage_compatibility_hardening.sql"
+_D0_MIGRATION = "004_trial_identity_holdout_gate.sql"
+_TRIAL_STAGES = (
+    "EXPLORATORY",
+    "CANDIDATE",
+    "PROMOTABLE",
+    "LIVE_CANDIDATE",
+)
+_TRIAL_STAGE_PREDECESSOR = {
+    "CANDIDATE": "EXPLORATORY",
+    "PROMOTABLE": "CANDIDATE",
+    "LIVE_CANDIDATE": "PROMOTABLE",
+}
 
 # This is the only legacy 002 marker admitted by the A1/H0 compatibility path.
 # It is the byte-level marker held by the persisted A0 runtime, not a general
@@ -48,6 +60,10 @@ _EXPECTED_F36_TRIGGER_FINGERPRINT = "f442e3cc08d9baede5917ef5ac4f8ddf8ae66752e21
 _EXPECTED_FINAL_TRIGGER_FINGERPRINT = "10f4a9f33e819b7e416a58fe5f5ec71747b190529a2c409ae01246373ca2b629"
 _EXPECTED_A0_BASE_SCHEMA_FINGERPRINT = "8ef37f0c1c9fb652cc62c6630f06acaa59aa5051f82d9ae1e2a39fd631415774"
 _EXPECTED_NO_TRIGGER_FINGERPRINT = "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+# D0 fingerprints bind the exact add-only 004 schema before a registry accepts
+# its marker. They cover tables/indexes and triggers independently.
+_EXPECTED_D0_BASE_SCHEMA_FINGERPRINT = "829457983564825ae719a9c05cefccff8dad77e98e405c833bab858e7bf020a0"
+_EXPECTED_D0_TRIGGER_FINGERPRINT = "2b3ba2c20a5260e075b5bdc76adb4bbe1b8bdb540629111d86e35659b552dff1"
 
 _COMPATIBILITY_HARDENING_TRIGGERS = (
     "relations_require_adjacent_chain",
@@ -149,6 +165,39 @@ class LineageBundleResult:
     """Outcome of a contract-only lineage bundle write or exact replay."""
 
     artifact_ids: tuple[str, ...]
+    reused: bool
+    sqlite_write_elapsed_ns: int
+    sqlite_read_elapsed_ns: int
+
+
+@dataclass(frozen=True)
+class TrialIdentityResult:
+    """Immutable D0 trial identity and its deterministic family/dataset count."""
+
+    trial_id: str
+    trial_count: int
+    reused: bool
+    sqlite_write_elapsed_ns: int
+    sqlite_read_elapsed_ns: int
+
+
+@dataclass(frozen=True)
+class HoldoutAccessResult:
+    """Append-only D0 holdout access outcome for an exact replay or new record."""
+
+    holdout_access_id: str
+    reused: bool
+    sqlite_write_elapsed_ns: int
+    sqlite_read_elapsed_ns: int
+
+
+@dataclass(frozen=True)
+class TrialStageResult:
+    """Append-only D0 stage transition outcome for an exact replay or new record."""
+
+    stage_transition_id: str
+    trial_id: str
+    stage: str
     reused: bool
     sqlite_write_elapsed_ns: int
     sqlite_read_elapsed_ns: int
@@ -409,6 +458,325 @@ class ExperimentRegistry:
         finally:
             connection.close()
 
+    def record_trial_identity(
+        self,
+        *,
+        strategy_family_id: str,
+        data_snapshot_artifact_id: str,
+        dataset_sha256: str,
+        code_sha256: str,
+        config_sha256: str,
+        created_at_ns: int,
+    ) -> TrialIdentityResult:
+        """Atomically record or exactly replay one content-addressed D0 trial."""
+        _require_nonempty(strategy_family_id, "strategy_family_id")
+        _require_sha256(data_snapshot_artifact_id, "data_snapshot_artifact_id")
+        _require_sha256(dataset_sha256, "dataset_sha256")
+        _require_sha256(code_sha256, "code_sha256")
+        _require_sha256(config_sha256, "config_sha256")
+        _require_nonnegative_integer(created_at_ns, "created_at_ns")
+
+        identity = {
+            "code_sha256": code_sha256,
+            "config_sha256": config_sha256,
+            "data_snapshot_artifact_id": data_snapshot_artifact_id,
+            "dataset_sha256": dataset_sha256,
+            "strategy_family_id": strategy_family_id,
+        }
+        trial_id = sha256_bytes(canonical_bytes(identity))
+        started = time.perf_counter_ns()
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            expected = (
+                strategy_family_id,
+                data_snapshot_artifact_id,
+                dataset_sha256,
+                code_sha256,
+                config_sha256,
+                trial_id,
+            )
+            existing = connection.execute(
+                """
+                SELECT strategy_family_id, data_snapshot_artifact_id, dataset_sha256,
+                       code_sha256, config_sha256, identity_sha256
+                FROM trial_identities WHERE trial_id = ?
+                """,
+                (trial_id,),
+            ).fetchone()
+            if existing is not None:
+                if tuple(existing) != expected:
+                    raise RegistryConflict("trial identifier maps to different immutable evidence")
+                initial_stage = connection.execute(
+                    """
+                    SELECT from_stage, evidence_artifact_id FROM trial_stage_transitions
+                    WHERE trial_id = ? AND to_stage = 'EXPLORATORY'
+                    """,
+                    (trial_id,),
+                ).fetchone()
+                if initial_stage is None or tuple(initial_stage) != (None, data_snapshot_artifact_id):
+                    raise RegistryConflict("trial identity is missing its immutable exploratory stage")
+                count = self._trial_count_locked(
+                    connection,
+                    strategy_family_id,
+                    data_snapshot_artifact_id,
+                    dataset_sha256,
+                )
+                connection.execute("COMMIT")
+                return TrialIdentityResult(
+                    trial_id=trial_id,
+                    trial_count=count,
+                    reused=True,
+                    sqlite_write_elapsed_ns=0,
+                    sqlite_read_elapsed_ns=max(1, time.perf_counter_ns() - started),
+                )
+
+            natural = connection.execute(
+                """
+                SELECT trial_id, identity_sha256 FROM trial_identities
+                WHERE strategy_family_id = ?
+                  AND data_snapshot_artifact_id = ?
+                  AND dataset_sha256 = ?
+                  AND code_sha256 = ?
+                  AND config_sha256 = ?
+                """,
+                (
+                    strategy_family_id,
+                    data_snapshot_artifact_id,
+                    dataset_sha256,
+                    code_sha256,
+                    config_sha256,
+                ),
+            ).fetchone()
+            if natural is not None:
+                raise RegistryConflict("trial evidence maps to a non-canonical immutable identifier")
+
+            self._require_matching_data_snapshot_locked(
+                connection,
+                data_snapshot_artifact_id,
+                dataset_sha256,
+            )
+            self._ensure_trial_locked(connection, trial_id, strategy_family_id, created_at_ns)
+            connection.execute(
+                """
+                INSERT INTO trial_identities (
+                    trial_id, strategy_family_id, data_snapshot_artifact_id,
+                    dataset_sha256, code_sha256, config_sha256, identity_sha256,
+                    created_at_ns
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trial_id,
+                    strategy_family_id,
+                    data_snapshot_artifact_id,
+                    dataset_sha256,
+                    code_sha256,
+                    config_sha256,
+                    trial_id,
+                    created_at_ns,
+                ),
+            )
+            self._ensure_stage_transition_locked(
+                connection,
+                trial_id=trial_id,
+                from_stage=None,
+                to_stage="EXPLORATORY",
+                evidence_artifact_id=data_snapshot_artifact_id,
+                recorded_at_ns=created_at_ns,
+            )
+            count = self._trial_count_locked(
+                connection,
+                strategy_family_id,
+                data_snapshot_artifact_id,
+                dataset_sha256,
+            )
+            connection.execute("COMMIT")
+            return TrialIdentityResult(
+                trial_id=trial_id,
+                trial_count=count,
+                reused=False,
+                sqlite_write_elapsed_ns=max(1, time.perf_counter_ns() - started),
+                sqlite_read_elapsed_ns=0,
+            )
+        except RegistryConflict:
+            self._rollback(connection)
+            raise
+        except sqlite3.IntegrityError as error:
+            self._rollback(connection)
+            raise RegistryConflict("trial identity integrity rejected") from error
+        except sqlite3.OperationalError as error:
+            self._rollback(connection)
+            raise RegistryBusy("registry writer is already held by another process") from error
+        finally:
+            connection.close()
+
+    def record_holdout_access(
+        self,
+        *,
+        trial_id: str,
+        evidence_artifact_id: str,
+        accessed_at_ns: int,
+    ) -> HoldoutAccessResult:
+        """Append one immutable holdout-access event, or reuse its exact replay."""
+        _require_sha256(trial_id, "trial_id")
+        _require_sha256(evidence_artifact_id, "evidence_artifact_id")
+        _require_nonnegative_integer(accessed_at_ns, "accessed_at_ns")
+        holdout_access_id = sha256_bytes(
+            canonical_bytes(
+                {
+                    "accessed_at_ns": accessed_at_ns,
+                    "evidence_artifact_id": evidence_artifact_id,
+                    "trial_id": trial_id,
+                }
+            )
+        )
+        started = time.perf_counter_ns()
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_holdout_snapshot_evidence_locked(
+                connection,
+                trial_id,
+                evidence_artifact_id,
+            )
+            expected = (trial_id, evidence_artifact_id, accessed_at_ns)
+            existing = connection.execute(
+                """
+                SELECT trial_id, evidence_artifact_id, accessed_at_ns
+                FROM holdout_accesses WHERE holdout_access_id = ?
+                """,
+                (holdout_access_id,),
+            ).fetchone()
+            if existing is not None:
+                if tuple(existing) != expected:
+                    raise RegistryConflict("holdout access identifier maps to different immutable evidence")
+                connection.execute("COMMIT")
+                return HoldoutAccessResult(
+                    holdout_access_id=holdout_access_id,
+                    reused=True,
+                    sqlite_write_elapsed_ns=0,
+                    sqlite_read_elapsed_ns=max(1, time.perf_counter_ns() - started),
+                )
+            natural = connection.execute(
+                """
+                SELECT holdout_access_id FROM holdout_accesses
+                WHERE trial_id = ? AND evidence_artifact_id = ? AND accessed_at_ns = ?
+                """,
+                expected,
+            ).fetchone()
+            if natural is not None:
+                raise RegistryConflict("holdout access maps to a non-canonical immutable identifier")
+            connection.execute(
+                """
+                INSERT INTO holdout_accesses (
+                    holdout_access_id, trial_id, evidence_artifact_id, accessed_at_ns
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (holdout_access_id, *expected),
+            )
+            connection.execute("COMMIT")
+            return HoldoutAccessResult(
+                holdout_access_id=holdout_access_id,
+                reused=False,
+                sqlite_write_elapsed_ns=max(1, time.perf_counter_ns() - started),
+                sqlite_read_elapsed_ns=0,
+            )
+        except RegistryConflict:
+            self._rollback(connection)
+            raise
+        except sqlite3.IntegrityError as error:
+            self._rollback(connection)
+            raise RegistryConflict("holdout access integrity rejected") from error
+        except sqlite3.OperationalError as error:
+            self._rollback(connection)
+            raise RegistryBusy("registry writer is already held by another process") from error
+        finally:
+            connection.close()
+
+    def advance_trial_stage(
+        self,
+        *,
+        trial_id: str,
+        to_stage: str,
+        evidence_artifact_id: str,
+        recorded_at_ns: int,
+    ) -> TrialStageResult:
+        """Append the next allowed D0 stage or exactly replay a prior stage event."""
+        _require_sha256(trial_id, "trial_id")
+        _require_sha256(evidence_artifact_id, "evidence_artifact_id")
+        _require_nonnegative_integer(recorded_at_ns, "recorded_at_ns")
+        if to_stage not in _TRIAL_STAGE_PREDECESSOR:
+            raise RegistryConflict("D0 stage advancement must target candidate-or-higher stage")
+        from_stage = _TRIAL_STAGE_PREDECESSOR[to_stage]
+        started = time.perf_counter_ns()
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_trial_bound_stage_evidence_locked(
+                connection,
+                trial_id,
+                evidence_artifact_id,
+            )
+            existing = connection.execute(
+                """
+                SELECT stage_transition_id, from_stage, evidence_artifact_id, recorded_at_ns
+                FROM trial_stage_transitions
+                WHERE trial_id = ? AND to_stage = ?
+                """,
+                (trial_id, to_stage),
+            ).fetchone()
+            expected_id = self._stage_transition_identifier(
+                trial_id,
+                from_stage,
+                to_stage,
+                evidence_artifact_id,
+                recorded_at_ns,
+            )
+            expected = (expected_id, from_stage, evidence_artifact_id, recorded_at_ns)
+            if existing is not None:
+                if tuple(existing) != expected:
+                    raise RegistryConflict("trial stage maps to different immutable evidence")
+                connection.execute("COMMIT")
+                return TrialStageResult(
+                    stage_transition_id=expected_id,
+                    trial_id=trial_id,
+                    stage=to_stage,
+                    reused=True,
+                    sqlite_write_elapsed_ns=0,
+                    sqlite_read_elapsed_ns=max(1, time.perf_counter_ns() - started),
+                )
+            current_stage = self._current_trial_stage_locked(connection, trial_id)
+            if current_stage != from_stage:
+                raise RegistryConflict("trial stage transition does not follow the current immutable stage")
+            self._ensure_stage_transition_locked(
+                connection,
+                trial_id=trial_id,
+                from_stage=from_stage,
+                to_stage=to_stage,
+                evidence_artifact_id=evidence_artifact_id,
+                recorded_at_ns=recorded_at_ns,
+            )
+            connection.execute("COMMIT")
+            return TrialStageResult(
+                stage_transition_id=expected_id,
+                trial_id=trial_id,
+                stage=to_stage,
+                reused=False,
+                sqlite_write_elapsed_ns=max(1, time.perf_counter_ns() - started),
+                sqlite_read_elapsed_ns=0,
+            )
+        except RegistryConflict:
+            self._rollback(connection)
+            raise
+        except sqlite3.IntegrityError as error:
+            self._rollback(connection)
+            raise RegistryConflict("trial stage integrity rejected") from error
+        except sqlite3.OperationalError as error:
+            self._rollback(connection)
+            raise RegistryBusy("registry writer is already held by another process") from error
+        finally:
+            connection.close()
+
     def rollback_lineage_for_disposable_fixture(self) -> None:
         """Reverse A1/H0 migrations only in a marked temporary test fixture."""
         self._require_disposable_rollback_fixture()
@@ -420,6 +788,7 @@ class ExperimentRegistry:
                 connection.execute("BEGIN IMMEDIATE")
             except sqlite3.OperationalError as error:
                 raise RegistryBusy("registry rollback could not acquire the writer lock") from error
+            self._reject_d0_rollback_locked(connection)
             compatibility_applied = connection.execute(
                 "SELECT 1 FROM schema_migrations WHERE migration_name = ?",
                 (_COMPATIBILITY_MIGRATION,),
@@ -459,6 +828,7 @@ class ExperimentRegistry:
                 connection.execute("BEGIN IMMEDIATE")
             except sqlite3.OperationalError as error:
                 raise RegistryBusy("compatibility rollback could not acquire the writer lock") from error
+            self._reject_d0_rollback_locked(connection)
             self._rollback_compatibility_locked(connection)
             connection.execute("COMMIT")
         except RegistryConflict:
@@ -472,6 +842,7 @@ class ExperimentRegistry:
 
     def _rollback_compatibility_locked(self, connection: sqlite3.Connection) -> None:
         """Restore the exact pre-003 trigger state without touching lineage data."""
+        self._reject_d0_rollback_locked(connection)
         migration_digests = self._migration_digests()
         self._preflight_migration_state(connection, migration_digests)
         marker = connection.execute(
@@ -501,6 +872,14 @@ class ExperimentRegistry:
         if marker[0] == migration_digests.get(_LINEAGE_MIGRATION):
             self._execute_sql_script(connection, _SCHEMA_MIGRATIONS_NO_DELETE_TRIGGER_SQL)
         self._preflight_migration_state(connection, migration_digests)
+
+    @staticmethod
+    def _reject_d0_rollback_locked(connection: sqlite3.Connection) -> None:
+        if connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE migration_name = ?",
+            (_D0_MIGRATION,),
+        ).fetchone() is not None:
+            raise RegistryConflict("D0 migration is forward-only and cannot be rolled back")
 
     def _record_a0_lineage_locked(
         self,
@@ -806,6 +1185,214 @@ class ExperimentRegistry:
         )
         return True
 
+    @staticmethod
+    def _require_matching_data_snapshot_locked(
+        connection: sqlite3.Connection,
+        data_snapshot_artifact_id: str,
+        dataset_sha256: str,
+    ) -> None:
+        row = connection.execute(
+            """
+            SELECT artifact_type, content_sha256 FROM artifacts
+            WHERE artifact_id = ?
+            """,
+            (data_snapshot_artifact_id,),
+        ).fetchone()
+        if row is None or tuple(row) != ("DataSnapshot", dataset_sha256):
+            raise RegistryConflict("trial identity requires a matching immutable data snapshot")
+
+    @staticmethod
+    def _require_existing_artifact_locked(
+        connection: sqlite3.Connection,
+        artifact_id: str,
+    ) -> None:
+        if connection.execute(
+            "SELECT 1 FROM artifacts WHERE artifact_id = ?",
+            (artifact_id,),
+        ).fetchone() is None:
+            raise RegistryConflict("D0 evidence artifact is missing")
+
+    @staticmethod
+    def _require_holdout_snapshot_evidence_locked(
+        connection: sqlite3.Connection,
+        trial_id: str,
+        evidence_artifact_id: str,
+    ) -> None:
+        """A holdout read must name the trial's immutable data snapshot itself."""
+        row = connection.execute(
+            """
+            SELECT data_snapshot_artifact_id
+            FROM trial_identities
+            WHERE trial_id = ?
+            """,
+            (trial_id,),
+        ).fetchone()
+        if row is None or row[0] != evidence_artifact_id:
+            raise RegistryConflict("holdout access evidence is not the trial's immutable data snapshot")
+        if connection.execute(
+            """
+            SELECT 1
+            FROM trial_stage_transitions
+            WHERE trial_id = ?
+              AND to_stage IN ('CANDIDATE', 'PROMOTABLE', 'LIVE_CANDIDATE')
+            LIMIT 1
+            """,
+            (trial_id,),
+        ).fetchone() is not None:
+            raise RegistryConflict("holdout access is forbidden after candidate-or-higher promotion")
+
+    @staticmethod
+    def _require_trial_bound_stage_evidence_locked(
+        connection: sqlite3.Connection,
+        trial_id: str,
+        evidence_artifact_id: str,
+    ) -> None:
+        """Require a completed, direct snapshot child with the trial's exact inputs."""
+        evidence = connection.execute(
+            """
+            SELECT 1
+            FROM trial_identities AS identity
+            JOIN experiments AS experiment
+              ON experiment.data_snapshot_artifact_id = identity.data_snapshot_artifact_id
+             AND experiment.experiment_run_artifact_id = ?
+             AND experiment.code_sha256 = identity.code_sha256
+             AND experiment.config_sha256 = identity.config_sha256
+            JOIN trials AS source_trial
+              ON source_trial.trial_id = experiment.trial_id
+             AND source_trial.strategy_family_id = identity.strategy_family_id
+            JOIN experiment_registry AS registry
+              ON registry.experiment_id = experiment.experiment_id
+            JOIN artifacts AS artifact
+              ON artifact.artifact_id = ?
+             AND artifact.artifact_type = 'ExperimentRun'
+            JOIN relations AS relation
+              ON relation.parent_artifact_id = identity.data_snapshot_artifact_id
+             AND relation.child_artifact_id = ?
+             AND relation.relation_type = 'derives_from'
+            WHERE identity.trial_id = ?
+              AND registry.strategy_family_id = identity.strategy_family_id
+              AND registry.dataset_sha256 = identity.dataset_sha256
+              AND registry.code_sha256 = identity.code_sha256
+              AND registry.config_sha256 = identity.config_sha256
+            LIMIT 1
+            """,
+            (evidence_artifact_id, evidence_artifact_id, evidence_artifact_id, trial_id),
+        ).fetchone()
+        if evidence is None:
+            raise RegistryConflict(
+                "trial stage evidence is not a completed immutable run bound to the trial inputs"
+            )
+
+    @staticmethod
+    def _trial_count_locked(
+        connection: sqlite3.Connection,
+        strategy_family_id: str,
+        data_snapshot_artifact_id: str,
+        dataset_sha256: str,
+    ) -> int:
+        return int(
+            connection.execute(
+                """
+                SELECT COUNT(*) FROM trial_identities
+                WHERE strategy_family_id = ?
+                  AND data_snapshot_artifact_id = ?
+                  AND dataset_sha256 = ?
+                """,
+                (strategy_family_id, data_snapshot_artifact_id, dataset_sha256),
+            ).fetchone()[0]
+        )
+
+    @staticmethod
+    def _stage_transition_identifier(
+        trial_id: str,
+        from_stage: str | None,
+        to_stage: str,
+        evidence_artifact_id: str,
+        recorded_at_ns: int,
+    ) -> str:
+        return sha256_bytes(
+            canonical_bytes(
+                {
+                    "evidence_artifact_id": evidence_artifact_id,
+                    "from_stage": from_stage,
+                    "recorded_at_ns": recorded_at_ns,
+                    "to_stage": to_stage,
+                    "trial_id": trial_id,
+                }
+            )
+        )
+
+    @staticmethod
+    def _current_trial_stage_locked(
+        connection: sqlite3.Connection,
+        trial_id: str,
+    ) -> str | None:
+        row = connection.execute(
+            """
+            SELECT to_stage FROM trial_stage_transitions
+            WHERE trial_id = ?
+            ORDER BY CASE to_stage
+                WHEN 'EXPLORATORY' THEN 1
+                WHEN 'CANDIDATE' THEN 2
+                WHEN 'PROMOTABLE' THEN 3
+                WHEN 'LIVE_CANDIDATE' THEN 4
+                ELSE 0
+            END DESC
+            LIMIT 1
+            """,
+            (trial_id,),
+        ).fetchone()
+        return None if row is None else row[0]
+
+    @classmethod
+    def _ensure_stage_transition_locked(
+        cls,
+        connection: sqlite3.Connection,
+        *,
+        trial_id: str,
+        from_stage: str | None,
+        to_stage: str,
+        evidence_artifact_id: str,
+        recorded_at_ns: int,
+    ) -> bool:
+        identifier = cls._stage_transition_identifier(
+            trial_id,
+            from_stage,
+            to_stage,
+            evidence_artifact_id,
+            recorded_at_ns,
+        )
+        existing = connection.execute(
+            """
+            SELECT stage_transition_id, from_stage, evidence_artifact_id, recorded_at_ns
+            FROM trial_stage_transitions
+            WHERE trial_id = ? AND to_stage = ?
+            """,
+            (trial_id, to_stage),
+        ).fetchone()
+        expected = (identifier, from_stage, evidence_artifact_id, recorded_at_ns)
+        if existing is not None:
+            if tuple(existing) != expected:
+                raise RegistryConflict("trial stage maps to different immutable evidence")
+            return False
+        connection.execute(
+            """
+            INSERT INTO trial_stage_transitions (
+                stage_transition_id, trial_id, from_stage, to_stage,
+                evidence_artifact_id, recorded_at_ns
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                identifier,
+                trial_id,
+                from_stage,
+                to_stage,
+                evidence_artifact_id,
+                recorded_at_ns,
+            ),
+        )
+        return True
+
     def _migration_digests(self) -> dict[str, str]:
         return {
             path.name: sha256_bytes(self._read_migration(path))
@@ -853,9 +1440,14 @@ class ExperimentRegistry:
         connection: sqlite3.Connection,
         migration_digests: dict[str, str],
     ) -> Optional[str]:
-        required_local = {_REGISTRY_MIGRATION, _LINEAGE_MIGRATION, _COMPATIBILITY_MIGRATION}
+        required_local = {
+            _REGISTRY_MIGRATION,
+            _LINEAGE_MIGRATION,
+            _COMPATIBILITY_MIGRATION,
+            _D0_MIGRATION,
+        }
         if not required_local.issubset(migration_digests):
-            raise RegistryConflict("required A1/H0 migrations are missing")
+            raise RegistryConflict("required A1/H0 and D0 migrations are missing")
         rows = tuple(
             connection.execute(
                 "SELECT migration_name, migration_sha256 FROM schema_migrations ORDER BY migration_name"
@@ -875,7 +1467,7 @@ class ExperimentRegistry:
                 raise RegistryConflict("empty migration ledger is not a blank registry")
             return None
         ledger = {name: digest for name, digest in rows}
-        allowed = {_REGISTRY_MIGRATION, _LINEAGE_MIGRATION, _COMPATIBILITY_MIGRATION}
+        allowed = required_local
         unexpected = set(ledger) - allowed
         if unexpected:
             raise RegistryConflict("unknown or newer migration marker is applied")
@@ -888,7 +1480,10 @@ class ExperimentRegistry:
             ):
                 raise RegistryConflict("A0 registry schema fingerprint is not recognized")
             return None
-        if set(ledger) - {_REGISTRY_MIGRATION, _LINEAGE_MIGRATION} and _COMPATIBILITY_MIGRATION not in ledger:
+        if (
+            set(ledger) - {_REGISTRY_MIGRATION, _LINEAGE_MIGRATION}
+            and _COMPATIBILITY_MIGRATION not in ledger
+        ):
             raise RegistryConflict("migration ledger order is not recognized")
         if _REGISTRY_MIGRATION not in ledger or _LINEAGE_MIGRATION not in ledger:
             raise RegistryConflict("migration ledger is incomplete")
@@ -909,15 +1504,34 @@ class ExperimentRegistry:
         else:
             raise RegistryConflict("lineage migration checksum is not a recognized A1/H0 state")
 
-        if _COMPATIBILITY_MIGRATION in ledger:
+        compatibility_applied = _COMPATIBILITY_MIGRATION in ledger
+        d0_applied = _D0_MIGRATION in ledger
+        if compatibility_applied:
             if ledger[_COMPATIBILITY_MIGRATION] != migration_digests[_COMPATIBILITY_MIGRATION]:
                 raise RegistryConflict("compatibility migration checksum changed after apply")
         elif set(ledger) != {_REGISTRY_MIGRATION, _LINEAGE_MIGRATION}:
             raise RegistryConflict("migration ledger contains an unsupported partial state")
+        if d0_applied:
+            if not compatibility_applied:
+                raise RegistryConflict("D0 migration requires compatibility migration")
+            if ledger[_D0_MIGRATION] != migration_digests[_D0_MIGRATION]:
+                raise RegistryConflict("D0 migration checksum changed after apply")
+            expected_base_fingerprint = _EXPECTED_D0_BASE_SCHEMA_FINGERPRINT
+            expected_trigger_fingerprint = _EXPECTED_D0_TRIGGER_FINGERPRINT
+            if expected_base_fingerprint is None or expected_trigger_fingerprint is None:
+                raise RegistryConflict("D0 schema fingerprint is not bound")
+        else:
+            expected_base_fingerprint = _EXPECTED_BASE_SCHEMA_FINGERPRINT
 
         self._assert_database_integrity(connection)
-        self._assert_schema_fingerprint(connection, expected_trigger_fingerprint)
+        self._assert_schema_fingerprint(
+            connection,
+            expected_base_fingerprint,
+            expected_trigger_fingerprint,
+        )
         self._validate_persisted_lineage(connection)
+        if d0_applied:
+            self._validate_persisted_d0(connection)
         return lineage_digest
 
     @staticmethod
@@ -931,10 +1545,11 @@ class ExperimentRegistry:
     @staticmethod
     def _assert_schema_fingerprint(
         connection: sqlite3.Connection,
+        expected_base_fingerprint: str,
         expected_trigger_fingerprint: str,
     ) -> None:
         base_fingerprint, trigger_fingerprint = ExperimentRegistry._schema_fingerprints(connection)
-        if base_fingerprint != _EXPECTED_BASE_SCHEMA_FINGERPRINT:
+        if base_fingerprint != expected_base_fingerprint:
             raise RegistryConflict("SQLite table/index schema fingerprint is not recognized")
         if trigger_fingerprint != expected_trigger_fingerprint:
             raise RegistryConflict("SQLite trigger schema fingerprint is not recognized")
@@ -1040,6 +1655,160 @@ class ExperimentRegistry:
         if invalid_experiment is not None:
             raise RegistryConflict("stored experiment lineage is not canonical")
 
+    @staticmethod
+    def _validate_persisted_d0(connection: sqlite3.Connection) -> None:
+        """Bind every persisted D0 row to its canonical, immutable evidence."""
+        for (
+            trial_id,
+            strategy_family_id,
+            data_snapshot_artifact_id,
+            dataset_sha256,
+            code_sha256,
+            config_sha256,
+            identity_sha256,
+        ) in connection.execute(
+            """
+            SELECT trial_id, strategy_family_id, data_snapshot_artifact_id,
+                   dataset_sha256, code_sha256, config_sha256, identity_sha256
+            FROM trial_identities
+            """
+        ):
+            _require_sha256(trial_id, "stored trial_id")
+            _require_nonempty(strategy_family_id, "stored strategy_family_id")
+            _require_sha256(data_snapshot_artifact_id, "stored data_snapshot_artifact_id")
+            _require_sha256(dataset_sha256, "stored dataset_sha256")
+            _require_sha256(code_sha256, "stored code_sha256")
+            _require_sha256(config_sha256, "stored config_sha256")
+            _require_sha256(identity_sha256, "stored trial identity_sha256")
+            expected_trial_id = sha256_bytes(
+                canonical_bytes(
+                    {
+                        "code_sha256": code_sha256,
+                        "config_sha256": config_sha256,
+                        "data_snapshot_artifact_id": data_snapshot_artifact_id,
+                        "dataset_sha256": dataset_sha256,
+                        "strategy_family_id": strategy_family_id,
+                    }
+                )
+            )
+            if trial_id != expected_trial_id or identity_sha256 != expected_trial_id:
+                raise RegistryConflict("stored trial identity does not match immutable evidence")
+            snapshot = connection.execute(
+                """
+                SELECT artifact_type, content_sha256 FROM artifacts
+                WHERE artifact_id = ?
+                """,
+                (data_snapshot_artifact_id,),
+            ).fetchone()
+            trial = connection.execute(
+                "SELECT strategy_family_id FROM trials WHERE trial_id = ?",
+                (trial_id,),
+            ).fetchone()
+            if (
+                snapshot is None
+                or tuple(snapshot) != ("DataSnapshot", dataset_sha256)
+                or trial is None
+                or trial[0] != strategy_family_id
+            ):
+                raise RegistryConflict("stored trial identity has mismatched parent evidence")
+            initial = connection.execute(
+                """
+                SELECT from_stage, evidence_artifact_id
+                FROM trial_stage_transitions
+                WHERE trial_id = ? AND to_stage = 'EXPLORATORY'
+                """,
+                (trial_id,),
+            ).fetchone()
+            if initial is None or tuple(initial) != (None, data_snapshot_artifact_id):
+                raise RegistryConflict("stored trial identity is missing its immutable exploratory stage")
+
+        for holdout_access_id, trial_id, evidence_artifact_id, accessed_at_ns in connection.execute(
+            """
+            SELECT holdout_access_id, trial_id, evidence_artifact_id, accessed_at_ns
+            FROM holdout_accesses
+            """
+        ):
+            _require_sha256(holdout_access_id, "stored holdout_access_id")
+            _require_sha256(trial_id, "stored holdout trial_id")
+            _require_sha256(evidence_artifact_id, "stored holdout evidence_artifact_id")
+            _require_nonnegative_integer(accessed_at_ns, "stored holdout accessed_at_ns")
+            expected = sha256_bytes(
+                canonical_bytes(
+                    {
+                        "accessed_at_ns": accessed_at_ns,
+                        "evidence_artifact_id": evidence_artifact_id,
+                        "trial_id": trial_id,
+                    }
+                )
+            )
+            if holdout_access_id != expected:
+                raise RegistryConflict("stored holdout access does not match immutable evidence")
+            ExperimentRegistry._require_holdout_snapshot_evidence_locked(
+                connection,
+                trial_id,
+                evidence_artifact_id,
+            )
+
+        for trial_id in connection.execute(
+            "SELECT DISTINCT trial_id FROM trial_stage_transitions"
+        ):
+            expected_from: str | None = None
+            events = connection.execute(
+                """
+                SELECT stage_transition_id, from_stage, to_stage,
+                       evidence_artifact_id, recorded_at_ns
+                FROM trial_stage_transitions
+                WHERE trial_id = ?
+                ORDER BY CASE to_stage
+                    WHEN 'EXPLORATORY' THEN 1
+                    WHEN 'CANDIDATE' THEN 2
+                    WHEN 'PROMOTABLE' THEN 3
+                    WHEN 'LIVE_CANDIDATE' THEN 4
+                    ELSE 0
+                END ASC
+                """,
+                (trial_id[0],),
+            )
+            for identifier, from_stage, to_stage, evidence_artifact_id, recorded_at_ns in events:
+                if to_stage not in _TRIAL_STAGES or from_stage != expected_from:
+                    raise RegistryConflict("stored trial stage transition order is invalid")
+                if to_stage == "EXPLORATORY":
+                    expected_from = "EXPLORATORY"
+                else:
+                    if _TRIAL_STAGE_PREDECESSOR.get(to_stage) != from_stage:
+                        raise RegistryConflict("stored trial stage transition order is invalid")
+                    expected_from = to_stage
+                _require_sha256(identifier, "stored stage_transition_id")
+                _require_sha256(evidence_artifact_id, "stored stage evidence_artifact_id")
+                _require_nonnegative_integer(recorded_at_ns, "stored stage recorded_at_ns")
+                expected_identifier = ExperimentRegistry._stage_transition_identifier(
+                    trial_id[0],
+                    from_stage,
+                    to_stage,
+                    evidence_artifact_id,
+                    recorded_at_ns,
+                )
+                if identifier != expected_identifier:
+                    raise RegistryConflict("stored trial stage does not match immutable evidence")
+                if to_stage == "EXPLORATORY":
+                    initial = connection.execute(
+                        """
+                        SELECT data_snapshot_artifact_id FROM trial_identities
+                        WHERE trial_id = ?
+                        """,
+                        (trial_id[0],),
+                    ).fetchone()
+                    if initial is None or initial[0] != evidence_artifact_id:
+                        raise RegistryConflict(
+                            "stored exploratory stage is not bound to its immutable data snapshot"
+                        )
+                else:
+                    ExperimentRegistry._require_trial_bound_stage_evidence_locked(
+                        connection,
+                        trial_id[0],
+                        evidence_artifact_id,
+                    )
+
     def _connect(self) -> sqlite3.Connection:
         self._validate_storage_paths()
         connection = sqlite3.connect(
@@ -1125,3 +1894,8 @@ def _require_sha256(value: str, label: str) -> None:
 def _require_nonempty(value: str, label: str) -> None:
     if not isinstance(value, str) or not value:
         raise RegistryConflict(f"{label} must be non-empty")
+
+
+def _require_nonnegative_integer(value: object, label: str) -> None:
+    if type(value) is not int or value < 0:
+        raise RegistryConflict(f"{label} must be a non-negative integer")

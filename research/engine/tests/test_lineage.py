@@ -56,6 +56,61 @@ class LineageAcceptanceTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def _d0_evidence(
+        self,
+        label: str,
+        *,
+        dataset_label: str,
+        strategy_family_id: str,
+        code_sha256: str,
+        config_sha256: str,
+    ) -> tuple[LineageArtifact, LineageArtifact]:
+        """Create completed A0 evidence that is bound to exact D0 trial inputs."""
+        dataset_identity = digest(f"{dataset_label}-identity")
+        dataset_sha256 = digest(f"{dataset_label}-content")
+        experiment_id = digest(f"{label}-experiment")
+        canonical_summary = {"d0_test_result": label}
+        result_artifact_id = sha256_bytes(canonical_bytes(canonical_summary))
+        self.registry.record_or_reuse(
+            experiment_id=experiment_id,
+            trial_id=f"{label}-source-trial",
+            strategy_family_id=strategy_family_id,
+            dataset_path=f"/readonly/{dataset_label}.parquet",
+            dataset_identity=dataset_identity,
+            dataset_sha256=dataset_sha256,
+            code_sha256=code_sha256,
+            config_sha256=config_sha256,
+            started_at_ns=1,
+            finished_at_ns=2,
+            result_artifact_id=result_artifact_id,
+            canonical_summary=canonical_summary,
+        )
+        snapshot = LineageArtifact(
+            artifact_type="DataSnapshot",
+            identity_sha256=dataset_identity,
+            content_sha256=dataset_sha256,
+            payload={
+                "dataset_identity": dataset_identity,
+                "dataset_sha256": dataset_sha256,
+            },
+        )
+        experiment = LineageArtifact(
+            artifact_type="ExperimentRun",
+            identity_sha256=experiment_id,
+            content_sha256=result_artifact_id,
+            payload={
+                "code_sha256": code_sha256,
+                "config_sha256": config_sha256,
+                "dataset_identity": dataset_identity,
+                "dataset_sha256": dataset_sha256,
+                "experiment_id": experiment_id,
+                "result_artifact_id": result_artifact_id,
+                "strategy_family_id": strategy_family_id,
+                "trial_id": f"{label}-source-trial",
+            },
+        )
+        return snapshot, experiment
+
     def test_contract_bundle_is_idempotent_and_invalid_edges_roll_back_atomically(self) -> None:
         snapshot = artifact("DataSnapshot", "snapshot-1", "dataset-1", "snapshot")
         experiment = artifact("ExperimentRun", "experiment-1", "result-1", "experiment")
@@ -98,6 +153,226 @@ class LineageAcceptanceTests(unittest.TestCase):
         self.assertEqual(self._count("artifacts"), 2)
         self.assertEqual(self._count("relations"), 1)
 
+    def test_d0_trial_identity_holdout_and_stage_gate_are_immutable_and_idempotent(self) -> None:
+        identity_args = {
+            "strategy_family_id": "family-d0",
+            "code_sha256": digest("d0-code-a"),
+            "config_sha256": digest("d0-config-a"),
+            "created_at_ns": 1,
+        }
+        snapshot, evidence = self._d0_evidence(
+            "d0-a",
+            dataset_label="d0",
+            strategy_family_id=identity_args["strategy_family_id"],
+            code_sha256=identity_args["code_sha256"],
+            config_sha256=identity_args["config_sha256"],
+        )
+        identity_args.update(
+            {
+                "data_snapshot_artifact_id": snapshot.artifact_id,
+                "dataset_sha256": snapshot.content_sha256,
+            }
+        )
+        first = self.registry.record_trial_identity(**identity_args)
+        replay = self.registry.record_trial_identity(**identity_args)
+        second_code_sha256 = digest("d0-code-b")
+        second_config_sha256 = digest("d0-config-b")
+        second_snapshot, second_evidence = self._d0_evidence(
+            "d0-b",
+            dataset_label="d0",
+            strategy_family_id=identity_args["strategy_family_id"],
+            code_sha256=second_code_sha256,
+            config_sha256=second_config_sha256,
+        )
+        self.assertEqual(second_snapshot.artifact_id, snapshot.artifact_id)
+        second = self.registry.record_trial_identity(
+            **{
+                **identity_args,
+                "code_sha256": second_code_sha256,
+                "config_sha256": second_config_sha256,
+                "created_at_ns": 2,
+            }
+        )
+        self.assertFalse(first.reused)
+        self.assertTrue(replay.reused)
+        self.assertEqual(first.trial_id, replay.trial_id)
+        self.assertEqual(first.trial_count, 1)
+        self.assertEqual(replay.trial_count, 1)
+        self.assertEqual(second.trial_count, 2)
+        self.assertNotEqual(first.trial_id, second.trial_id)
+        self.assertEqual(self._count("trial_identities"), 2)
+        self.assertEqual(self._count("trial_stage_transitions"), 2)
+
+        with self.assertRaises(RegistryConflict):
+            self.registry.record_trial_identity(
+                **{
+                    **identity_args,
+                    "data_snapshot_artifact_id": digest("missing-snapshot"),
+                    "created_at_ns": 3,
+                }
+            )
+        self.assertEqual(self._count("trial_identities"), 2)
+
+        with self.assertRaises(RegistryConflict):
+            self.registry.advance_trial_stage(
+                trial_id=first.trial_id,
+                to_stage="PROMOTABLE",
+                evidence_artifact_id=evidence.artifact_id,
+                recorded_at_ns=4,
+            )
+        with self.assertRaises(RegistryConflict):
+            self.registry.advance_trial_stage(
+                trial_id=first.trial_id,
+                to_stage="CANDIDATE",
+                evidence_artifact_id=second_evidence.artifact_id,
+                recorded_at_ns=4,
+            )
+        raw_connection = sqlite3.connect(self.database)
+        try:
+            with self.assertRaises(sqlite3.IntegrityError):
+                raw_connection.execute(
+                    """
+                    INSERT INTO trial_stage_transitions (
+                        stage_transition_id, trial_id, from_stage, to_stage,
+                        evidence_artifact_id, recorded_at_ns
+                    ) VALUES (?, ?, 'EXPLORATORY', 'CANDIDATE', ?, 4)
+                    """,
+                    (
+                        digest("raw-unbound-stage-evidence"),
+                        second.trial_id,
+                        evidence.artifact_id,
+                    ),
+                )
+        finally:
+            raw_connection.close()
+        candidate = self.registry.advance_trial_stage(
+            trial_id=first.trial_id,
+            to_stage="CANDIDATE",
+            evidence_artifact_id=evidence.artifact_id,
+            recorded_at_ns=5,
+        )
+        candidate_replay = self.registry.advance_trial_stage(
+            trial_id=first.trial_id,
+            to_stage="CANDIDATE",
+            evidence_artifact_id=evidence.artifact_id,
+            recorded_at_ns=5,
+        )
+        promotable = self.registry.advance_trial_stage(
+            trial_id=first.trial_id,
+            to_stage="PROMOTABLE",
+            evidence_artifact_id=evidence.artifact_id,
+            recorded_at_ns=6,
+        )
+        live = self.registry.advance_trial_stage(
+            trial_id=first.trial_id,
+            to_stage="LIVE_CANDIDATE",
+            evidence_artifact_id=evidence.artifact_id,
+            recorded_at_ns=7,
+        )
+        self.assertFalse(candidate.reused)
+        self.assertTrue(candidate_replay.reused)
+        self.assertEqual(candidate.stage_transition_id, candidate_replay.stage_transition_id)
+        self.assertEqual((promotable.stage, live.stage), ("PROMOTABLE", "LIVE_CANDIDATE"))
+
+        with self.assertRaises(RegistryConflict):
+            self.registry.record_holdout_access(
+                trial_id=first.trial_id,
+                evidence_artifact_id=snapshot.artifact_id,
+                accessed_at_ns=8,
+            )
+
+        with self.assertRaises(RegistryConflict):
+            self.registry.record_holdout_access(
+                trial_id=second.trial_id,
+                evidence_artifact_id=second_evidence.artifact_id,
+                accessed_at_ns=8,
+            )
+        access = self.registry.record_holdout_access(
+            trial_id=second.trial_id,
+            evidence_artifact_id=snapshot.artifact_id,
+            accessed_at_ns=8,
+        )
+        access_replay = self.registry.record_holdout_access(
+            trial_id=second.trial_id,
+            evidence_artifact_id=snapshot.artifact_id,
+            accessed_at_ns=8,
+        )
+        self.assertFalse(access.reused)
+        self.assertTrue(access_replay.reused)
+        with self.assertRaises(RegistryConflict):
+            self.registry.advance_trial_stage(
+                trial_id=second.trial_id,
+                to_stage="CANDIDATE",
+                evidence_artifact_id=evidence.artifact_id,
+                recorded_at_ns=9,
+            )
+        self.assertEqual(self._count("holdout_accesses"), 1)
+
+        connection = sqlite3.connect(self.database)
+        try:
+            post_candidate_holdout_id = sha256_bytes(
+                canonical_bytes(
+                    {
+                        "accessed_at_ns": 10,
+                        "evidence_artifact_id": snapshot.artifact_id,
+                        "trial_id": first.trial_id,
+                    }
+                )
+            )
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    """
+                    INSERT INTO holdout_accesses (
+                        holdout_access_id, trial_id, evidence_artifact_id, accessed_at_ns
+                    ) VALUES (?, ?, ?, 10)
+                    """,
+                    (post_candidate_holdout_id, first.trial_id, snapshot.artifact_id),
+                )
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                "UPDATE holdout_accesses SET accessed_at_ns = 99 WHERE holdout_access_id = ?",
+                (access.holdout_access_id,),
+                )
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    "DELETE FROM holdout_accesses WHERE holdout_access_id = ?",
+                    (access.holdout_access_id,),
+                )
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    """
+                    INSERT INTO trial_stage_transitions (
+                        stage_transition_id, trial_id, from_stage, to_stage,
+                        evidence_artifact_id, recorded_at_ns
+                    ) VALUES (?, ?, 'EXPLORATORY', 'CANDIDATE', ?, 10)
+                    """,
+                    (digest("blocked-raw-transition"), second.trial_id, second_evidence.artifact_id),
+                )
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    """
+                    INSERT OR REPLACE INTO trial_identities (
+                        trial_id, strategy_family_id, data_snapshot_artifact_id,
+                        dataset_sha256, code_sha256, config_sha256, identity_sha256,
+                        created_at_ns
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                    """,
+                    (
+                        first.trial_id,
+                        identity_args["strategy_family_id"],
+                        snapshot.artifact_id,
+                        snapshot.content_sha256,
+                        identity_args["code_sha256"],
+                        identity_args["config_sha256"],
+                        first.trial_id,
+                    ),
+                )
+        finally:
+            connection.close()
+        self.assertEqual(self._count("trial_identities"), 2)
+        self.assertEqual(self._count("holdout_accesses"), 1)
+        self.assertEqual(self._count("trial_stage_transitions"), 5)
+
         same_identity_changed_hash = LineageArtifact(
             artifact_type="DataSnapshot",
             identity_sha256=snapshot.identity_sha256,
@@ -106,8 +381,8 @@ class LineageAcceptanceTests(unittest.TestCase):
         )
         with self.assertRaises(RegistryConflict):
             self.registry.record_contract_bundle((same_identity_changed_hash,), ())
-        self.assertEqual(self._count("artifacts"), 2)
-        self.assertEqual(self._count("relations"), 1)
+        self.assertEqual(self._count("artifacts"), 3)
+        self.assertEqual(self._count("relations"), 2)
 
     def test_result_hash_mismatch_is_rejected_without_a_partial_experiment(self) -> None:
         with self.assertRaises(RegistryConflict):
@@ -403,7 +678,7 @@ class LineageAcceptanceTests(unittest.TestCase):
         finally:
             raw_connection.close()
 
-    def test_migration_applies_and_reverses_only_in_a_marked_temporary_fixture(self) -> None:
+    def test_d0_migration_is_forward_only_in_a_marked_temporary_fixture(self) -> None:
         tables = {
             row[0]
             for row in sqlite3.connect(self.database).execute(
@@ -419,60 +694,20 @@ class LineageAcceptanceTests(unittest.TestCase):
                 "trials",
                 "experiments",
                 "promotions",
+                "trial_identities",
+                "holdout_accesses",
+                "trial_stage_transitions",
             }.issubset(tables)
         )
-
-        connection = sqlite3.connect(self.database)
-        try:
-            connection.execute(
-                """
-                INSERT INTO experiment_registry (
-                    experiment_id, trial_id, strategy_family_id, dataset_path,
-                    dataset_identity, dataset_sha256, code_sha256, config_sha256,
-                    started_at_ns, finished_at_ns, status, result_artifact_id,
-                    canonical_summary_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 2, 'completed', ?, ?)
-                """,
-                (
-                    digest("legacy-experiment"),
-                    "legacy-trial",
-                    "legacy-family",
-                    "/readonly/legacy.parquet",
-                    digest("legacy-identity"),
-                    digest("legacy-dataset"),
-                    digest("legacy-code"),
-                    digest("legacy-config"),
-                    sha256_bytes(canonical_bytes({})),
-                    "{}",
-                ),
-            )
-            connection.commit()
-        finally:
-            connection.close()
-
         (self.root / MARKER).write_text(MARKER_CONTENT, encoding="utf-8")
-        self.registry.rollback_lineage_for_disposable_fixture()
-
-        connection = sqlite3.connect(self.database)
-        try:
-            remaining_tables = {
-                row[0]
-                for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-            }
-            self.assertIn("experiment_registry", remaining_tables)
-            self.assertNotIn("artifacts", remaining_tables)
-            self.assertEqual(connection.execute("SELECT COUNT(*) FROM experiment_registry").fetchone()[0], 1)
-            self.assertEqual(
-                connection.execute(
-                    "SELECT COUNT(*) FROM schema_migrations WHERE migration_name = '002_lineage_foundation.sql'"
-                ).fetchone()[0],
-                0,
-            )
-        finally:
-            connection.close()
-
+        before = sha256_file(self.database)
+        with self.assertRaises(RegistryConflict):
+            self.registry.rollback_lineage_for_disposable_fixture()
+        with self.assertRaises(RegistryConflict):
+            self.registry.rollback_compatibility_for_disposable_fixture()
+        self.assertEqual(sha256_file(self.database), before)
         self.registry.initialize()
-        self.assertEqual(self._count("artifacts"), 0)
+        self.assertEqual(sha256_file(self.database), before)
 
     def test_a0_runner_records_only_proven_lineage_and_observational_sqlite_latency(self) -> None:
         runtime_parent = ENGINE_ROOT / "runtime"

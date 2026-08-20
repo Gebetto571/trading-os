@@ -38,7 +38,13 @@ def _rows(connection: sqlite3.Connection, statement: str) -> tuple[tuple[object,
 def _metadata_snapshot(database: Path) -> dict[str, object]:
     connection = sqlite3.connect(database)
     try:
-        return {
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        snapshot: dict[str, object] = {
             "ledger": _rows(
                 connection,
                 "SELECT migration_name, migration_sha256, applied_at_ns "
@@ -85,6 +91,29 @@ def _metadata_snapshot(database: Path) -> dict[str, object]:
                 "ORDER BY promotion_id",
             ),
         }
+        if "trial_identities" in tables:
+            snapshot["trial_identities"] = _rows(
+                connection,
+                "SELECT trial_id, strategy_family_id, data_snapshot_artifact_id, "
+                "dataset_sha256, code_sha256, config_sha256, identity_sha256, created_at_ns "
+                "FROM trial_identities ORDER BY trial_id",
+            )
+            snapshot["holdout_accesses"] = _rows(
+                connection,
+                "SELECT holdout_access_id, trial_id, evidence_artifact_id, accessed_at_ns "
+                "FROM holdout_accesses ORDER BY holdout_access_id",
+            )
+            snapshot["trial_stage_transitions"] = _rows(
+                connection,
+                "SELECT stage_transition_id, trial_id, from_stage, to_stage, "
+                "evidence_artifact_id, recorded_at_ns FROM trial_stage_transitions "
+                "ORDER BY stage_transition_id",
+            )
+        else:
+            snapshot["trial_identities"] = ()
+            snapshot["holdout_accesses"] = ()
+            snapshot["trial_stage_transitions"] = ()
+        return snapshot
     finally:
         connection.close()
 
@@ -95,9 +124,6 @@ class MigrationCompatibilityTests(unittest.TestCase):
 
     def _make_f36_fixture(self, database: Path) -> dict[str, object]:
         """Create a temporary, exact-shape f36 specimen with one linked A0 lineage."""
-        registry = self._registry(database)
-        registry.initialize()
-
         experiment_id = digest("f36-experiment")
         trial_id = "f36-trial"
         strategy_family_id = "deterministic-event-study-v1"
@@ -137,16 +163,27 @@ class MigrationCompatibilityTests(unittest.TestCase):
         connection = sqlite3.connect(database)
         try:
             connection.execute("PRAGMA foreign_keys = ON")
+            ExperimentRegistry._ensure_migration_ledger(connection)
+            for migration_name in (
+                registry_module._REGISTRY_MIGRATION,
+                registry_module._LINEAGE_MIGRATION,
+            ):
+                migration_path = MIGRATIONS / migration_name
+                ExperimentRegistry._execute_sql_script(
+                    connection,
+                    migration_path.read_text(encoding="utf-8"),
+                )
+                marker_digest = (
+                    registry_module._LEGACY_F36_LINEAGE_SHA256
+                    if migration_name == registry_module._LINEAGE_MIGRATION
+                    else sha256_bytes(migration_path.read_bytes())
+                )
+                connection.execute(
+                    "INSERT INTO schema_migrations VALUES (?, ?, ?)",
+                    (migration_name, marker_digest, 1),
+                )
             for trigger_name in registry_module._COMPATIBILITY_HARDENING_TRIGGERS:
                 connection.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
-            connection.execute(
-                "DELETE FROM schema_migrations WHERE migration_name = ?",
-                (registry_module._COMPATIBILITY_MIGRATION,),
-            )
-            connection.execute(
-                "UPDATE schema_migrations SET migration_sha256 = ? WHERE migration_name = ?",
-                (registry_module._LEGACY_F36_LINEAGE_SHA256, registry_module._LINEAGE_MIGRATION),
-            )
             connection.executescript(registry_module._LEGACY_F36_RELATION_TRIGGER_SQL)
             connection.execute(
                 """
@@ -260,8 +297,8 @@ class MigrationCompatibilityTests(unittest.TestCase):
             self.assertEqual(
                 ExperimentRegistry._schema_fingerprints(connection),
                 (
-                    registry_module._EXPECTED_BASE_SCHEMA_FINGERPRINT,
-                    registry_module._EXPECTED_FINAL_TRIGGER_FINGERPRINT,
+                    registry_module._EXPECTED_D0_BASE_SCHEMA_FINGERPRINT,
+                    registry_module._EXPECTED_D0_TRIGGER_FINGERPRINT,
                 ),
             )
             self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
@@ -284,6 +321,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
                     registry_module._REGISTRY_MIGRATION,
                     registry_module._LINEAGE_MIGRATION,
                     registry_module._COMPATIBILITY_MIGRATION,
+                    registry_module._D0_MIGRATION,
                 ),
             )
 
@@ -304,8 +342,12 @@ class MigrationCompatibilityTests(unittest.TestCase):
             self.assertEqual(after["trials"], before["trials"])
             self.assertEqual(after["experiments"], before["experiments"])
             self.assertEqual(after["promotions"], before["promotions"])
+            self.assertEqual(after["trial_identities"], ())
+            self.assertEqual(after["holdout_accesses"], ())
+            self.assertEqual(after["trial_stage_transitions"], ())
             self.assertEqual(after["ledger"][:2], before["ledger"])
-            self.assertEqual(after["ledger"][-1][0], registry_module._COMPATIBILITY_MIGRATION)
+            self.assertEqual(after["ledger"][-2][0], registry_module._COMPATIBILITY_MIGRATION)
+            self.assertEqual(after["ledger"][-1][0], registry_module._D0_MIGRATION)
 
             registry.initialize()
             self.assertEqual(_metadata_snapshot(database), after)
@@ -340,6 +382,12 @@ class MigrationCompatibilityTests(unittest.TestCase):
                     connection.execute(
                         "SELECT 1 FROM schema_migrations WHERE migration_name = ?",
                         (registry_module._COMPATIBILITY_MIGRATION,),
+                    ).fetchone(),
+                )
+                self.assertIsNotNone(
+                    connection.execute(
+                        "SELECT 1 FROM schema_migrations WHERE migration_name = ?",
+                        (registry_module._D0_MIGRATION,),
                     ).fetchone(),
                 )
             finally:
@@ -446,13 +494,86 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 self._registry(empty_ledger_database).initialize()
             self.assertEqual(sha256_file(empty_ledger_database), empty_ledger_before)
 
+            incomplete_d0_database = root / "incomplete-d0.sqlite3"
+            incomplete_registry = self._registry(incomplete_d0_database)
+            incomplete_registry.initialize()
+            snapshot = LineageArtifact(
+                artifact_type="DataSnapshot",
+                identity_sha256=digest("incomplete-d0-snapshot"),
+                content_sha256=digest("incomplete-d0-content"),
+                payload={"contract_label": "incomplete-d0-snapshot"},
+            )
+            run = LineageArtifact(
+                artifact_type="ExperimentRun",
+                identity_sha256=digest("incomplete-d0-run"),
+                content_sha256=digest("incomplete-d0-result"),
+                payload={"contract_label": "incomplete-d0-run"},
+            )
+            incomplete_registry.record_contract_bundle(
+                (snapshot, run),
+                ((snapshot.artifact_id, run.artifact_id),),
+            )
+            strategy_family_id = "incomplete-d0-family"
+            code_sha256 = digest("incomplete-d0-code")
+            config_sha256 = digest("incomplete-d0-config")
+            trial_id = sha256_bytes(
+                canonical_bytes(
+                    {
+                        "code_sha256": code_sha256,
+                        "config_sha256": config_sha256,
+                        "data_snapshot_artifact_id": snapshot.artifact_id,
+                        "dataset_sha256": snapshot.content_sha256,
+                        "strategy_family_id": strategy_family_id,
+                    }
+                )
+            )
+            connection = sqlite3.connect(incomplete_d0_database)
+            try:
+                connection.execute(
+                    "INSERT INTO trials VALUES (?, ?, ?, 1)",
+                    (
+                        trial_id,
+                        strategy_family_id,
+                        sha256_bytes(
+                            canonical_bytes(
+                                {"strategy_family_id": strategy_family_id, "trial_id": trial_id}
+                            )
+                        ),
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO trial_identities (
+                        trial_id, strategy_family_id, data_snapshot_artifact_id,
+                        dataset_sha256, code_sha256, config_sha256, identity_sha256,
+                        created_at_ns
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                    """,
+                    (
+                        trial_id,
+                        strategy_family_id,
+                        snapshot.artifact_id,
+                        snapshot.content_sha256,
+                        code_sha256,
+                        config_sha256,
+                        trial_id,
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            incomplete_before = _metadata_snapshot(incomplete_d0_database)
+            with self.assertRaises(RegistryConflict):
+                incomplete_registry.initialize()
+            self.assertEqual(_metadata_snapshot(incomplete_d0_database), incomplete_before)
+
             unknown_database = root / "unknown.sqlite3"
             self._make_f36_fixture(unknown_database)
             connection = sqlite3.connect(unknown_database)
             try:
                 connection.execute(
                     "INSERT INTO schema_migrations VALUES (?, ?, ?)",
-                    ("004_future.sql", digest("future-migration"), 9),
+                    ("005_future.sql", digest("future-migration"), 9),
                 )
                 connection.commit()
             finally:
@@ -498,7 +619,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
             self._make_f36_fixture(failing_database)
             copied_migrations = root / "migrations"
             shutil.copytree(MIGRATIONS, copied_migrations)
-            (copied_migrations / "004_injected_failure.sql").write_text(
+            (copied_migrations / "005_injected_failure.sql").write_text(
                 "CREATE TABLE injected_failure_probe (id INTEGER);\nSELECT unknown_function();\n",
                 encoding="utf-8",
             )
@@ -507,7 +628,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
                 self._registry(failing_database, copied_migrations).initialize()
             self.assertEqual(_metadata_snapshot(failing_database), failing_before)
 
-    def test_temporary_003_rollback_preserves_data_and_reapplies(self) -> None:
+    def test_d0_rejects_temporary_pre_d0_rollback_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             database = root / "legacy.sqlite3"
@@ -517,33 +638,11 @@ class MigrationCompatibilityTests(unittest.TestCase):
             upgraded = _metadata_snapshot(database)
             (root / MARKER).write_text(MARKER_CONTENT, encoding="utf-8")
 
-            registry.rollback_compatibility_for_disposable_fixture()
-            rolled_back = _metadata_snapshot(database)
-            self._assert_f36_shape(database)
-            self.assertEqual(rolled_back["registry"], upgraded["registry"])
-            self.assertEqual(rolled_back["artifacts"], upgraded["artifacts"])
-            self.assertEqual(rolled_back["relations"], upgraded["relations"])
-            self.assertEqual(rolled_back["trials"], upgraded["trials"])
-            self.assertEqual(rolled_back["experiments"], upgraded["experiments"])
-            self.assertEqual(rolled_back["promotions"], upgraded["promotions"])
-            self.assertEqual(
-                tuple(item[0] for item in rolled_back["ledger"]),
-                (registry_module._REGISTRY_MIGRATION, registry_module._LINEAGE_MIGRATION),
-            )
-
-            registry.initialize()
-            reapplied = _metadata_snapshot(database)
-            self.assertEqual(reapplied["objects"], upgraded["objects"])
-            self.assertEqual(reapplied["registry"], upgraded["registry"])
-            self.assertEqual(reapplied["artifacts"], upgraded["artifacts"])
-            self.assertEqual(reapplied["relations"], upgraded["relations"])
-            self.assertEqual(reapplied["trials"], upgraded["trials"])
-            self.assertEqual(reapplied["experiments"], upgraded["experiments"])
-            self.assertEqual(reapplied["promotions"], upgraded["promotions"])
-            self.assertEqual(
-                tuple((name, digest_value) for name, digest_value, _ in reapplied["ledger"]),
-                tuple((name, digest_value) for name, digest_value, _ in upgraded["ledger"]),
-            )
+            with self.assertRaises(RegistryConflict):
+                registry.rollback_compatibility_for_disposable_fixture()
+            with self.assertRaises(RegistryConflict):
+                registry.rollback_lineage_for_disposable_fixture()
+            self.assertEqual(_metadata_snapshot(database), upgraded)
             self._assert_final_shape(database)
 
     def test_upgraded_legacy_copy_enforces_raw_fk_and_immutability(self) -> None:
