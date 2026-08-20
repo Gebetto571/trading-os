@@ -23,8 +23,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install Draft 2020-12 parity validator
         run: python -m pip install --disable-pip-version-check jsonschema==4.23.0
+      - name: Install Research Engine test dependency
+        run: python -m pip install --disable-pip-version-check -r research/engine/requirements.txt
       - name: Unit, integration, governance, and security tests
         run: python -m unittest discover -s tests -v
+      - name: Research Engine package tests
+        run: python -m unittest discover -s research/engine/tests -v
       - name: Whitespace check
         run: git diff --check
 
