@@ -4,9 +4,11 @@ import io
 import json
 import os
 import tempfile
+import threading
 import unittest
 import uuid
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 from unittest.mock import patch
 
 from trading_os_bridge import cli
@@ -39,6 +41,19 @@ def chief_task(domain="00"):
             "non_goals": ["Non-goal"], "acceptance_criteria": ["Criterion"],
             "required_tests": ["Test"], "risks": ["Risk"], "stop_conditions": ["Stop"],
         },
+    }
+    return item
+
+
+def bound_chief_task(domain="00", paths=None, base_commit="abc123"):
+    paths = paths or ["tests/exact_cli.py"]
+    item = chief_task(domain)
+    item["metadata"]["FROZEN_OWNED_PATHS"] = list(paths)
+    item["metadata"]["SCOPE_BINDING_MANIFEST"] = {
+        "active_writer_principal": "chief-engineer",
+        "canonical_lane": f"chief-engineer/{domain}",
+        "expected_base_commit": base_commit,
+        "exact_owned_paths": list(paths),
     }
     return item
 
@@ -226,6 +241,167 @@ class CliIntegrationTests(unittest.TestCase):
             value is False
             for value in result["metadata"]["result"]["permission_state"].values()
         ))
+        self.assertTrue(cli.store().update_status(item["id"], "completed", worker="chief-engineer"))
+
+    def test_cli_exact_claim_only_targets_requested_uuid(self):
+        first = bound_chief_task(paths=["tests/first_cli.py"])
+        target = bound_chief_task(paths=["tests/target_cli.py"])
+        self._write("first.json", first)
+        self._write("target.json", target)
+        self.assertEqual(cli.command_ingest(argparse.Namespace(path=str(self.inbox))), 0)
+
+        args = cli.parser().parse_args([
+            "claim-task", "--id", target["id"], "--lane", "chief-engineer/00",
+            "--principal", "chief-engineer", "--base-commit", "abc123",
+            "--owned-path", "tests/target_cli.py", "--lease-seconds", "30",
+        ])
+        self.assertEqual(args.func(args), 0)
+        self.assertEqual(cli.store().get_message(target["id"])["status"], "processing")
+        self.assertEqual(cli.store().get_message(first["id"])["status"], "received")
+
+        missing = cli.parser().parse_args([
+            "claim-task", "--id", str(uuid.uuid4()), "--lane", "chief-engineer/00",
+            "--principal", "chief-engineer", "--base-commit", "abc123",
+            "--owned-path", "tests/first_cli.py",
+        ])
+        self.assertEqual(missing.func(missing), 1)
+        self.assertEqual(cli.store().get_message(first["id"])["status"], "received")
+
+        blank = argparse.Namespace(
+            id="", lane="chief-engineer/00", principal="chief-engineer", base_commit="abc123",
+            owned_path=["tests/first_cli.py"], lease_seconds=30,
+        )
+        self.assertEqual(cli.command_claim_task(blank), 1)
+        self.assertEqual(cli.store().get_message(first["id"])["status"], "received")
+
+    def test_cli_exact_reclaim_renews_only_expired_target(self):
+        item = bound_chief_task(paths=["tests/reclaim_cli.py"])
+        self._write("reclaim.json", item)
+        self.assertEqual(cli.command_ingest(argparse.Namespace(path=str(self.inbox))), 0)
+        claim = argparse.Namespace(
+            id=item["id"], lane="chief-engineer/00", principal="chief-engineer",
+            base_commit="abc123", owned_path=["tests/reclaim_cli.py"], lease_seconds=30,
+        )
+        self.assertEqual(cli.command_claim_task(claim), 0)
+        with cli.store().connect() as connection:
+            connection.execute(
+                "UPDATE messages SET lease_until='2000-01-01T00:00:00Z' WHERE id=?", (item["id"],)
+            )
+        reclaim = cli.parser().parse_args([
+            "reclaim-task", "--id", item["id"], "--lane", "chief-engineer/00",
+            "--principal", "chief-engineer", "--lease-seconds", "30",
+        ])
+        self.assertEqual(reclaim.func(reclaim), 0)
+        self.assertEqual(cli.store().get_message(item["id"])["attempt_count"], 2)
+
+    def test_result_rejects_expired_chief_lease_before_writing_outbox(self):
+        item = chief_task("00")
+        self._write("expired.json", item)
+        self.assertEqual(cli.command_ingest(argparse.Namespace(path=str(self.inbox))), 0)
+        claim_args = argparse.Namespace(
+            lane="chief-engineer/00", base_commit="abc123",
+            owned_path=["trading_os_bridge/store.py"], lease_seconds=30,
+        )
+        self.assertEqual(cli.command_claim_task(claim_args), 0)
+        with cli.store().connect() as connection:
+            connection.execute(
+                "UPDATE messages SET lease_until='2000-01-01T00:00:00Z' WHERE id=?", (item["id"],)
+            )
+        report = {
+            "subject": "Expired", "body": "Lease must be live.",
+            "changed_files": [], "commands": [],
+            "git_state": {"branch": "main", "commit_created": False},
+            "skipped_checks": [], "risks": [], "verification_verdict": "BLOCKED",
+            "next_safe_step": "Reclaim the exact task.",
+        }
+        report_path = self.root / "expired-result.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        self.assertEqual(cli.command_result(argparse.Namespace(
+            task_id=item["id"], report=str(report_path)
+        )), 1)
+        self.assertIsNone(cli.store().get_message(item["id"])["result_message_id"])
+        self.assertEqual(list(self.outbox.glob("*__response.json")), [])
+
+    def test_result_link_failure_compensates_new_outbox_artifact(self):
+        item = chief_task("00")
+        self._write("link-failure.json", item)
+        self.assertEqual(cli.command_ingest(argparse.Namespace(path=str(self.inbox))), 0)
+        claim_args = argparse.Namespace(
+            lane="chief-engineer/00", base_commit="abc123",
+            owned_path=["trading_os_bridge/store.py"], lease_seconds=30,
+        )
+        self.assertEqual(cli.command_claim_task(claim_args), 0)
+        report = {
+            "subject": "Link failure", "body": "Compensate unlinked output.",
+            "changed_files": [], "commands": [],
+            "git_state": {"branch": "main", "commit_created": False},
+            "skipped_checks": [], "risks": [], "verification_verdict": "CONDITIONAL",
+            "next_safe_step": "Retry only with a live lease.",
+        }
+        report_path = self.root / "link-failure-result.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        database = cli.store()
+        with patch.object(cli, "store", return_value=database), patch.object(
+            database, "link_result", return_value=False,
+        ):
+            self.assertEqual(cli.command_result(argparse.Namespace(
+                task_id=item["id"], report=str(report_path)
+            )), 1)
+        result_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"trading-os-result:{item['id']}"))
+        self.assertIsNone(database.get_message(result_id))
+        self.assertEqual(list(self.outbox.glob("*__response.json")), [])
+
+    def test_concurrent_deterministic_result_retries_preserve_linked_artifact(self):
+        item = chief_task("00")
+        self._write("concurrent-result.json", item)
+        self.assertEqual(cli.command_ingest(argparse.Namespace(path=str(self.inbox))), 0)
+        claim_args = argparse.Namespace(
+            lane="chief-engineer/00", base_commit="abc123",
+            owned_path=["trading_os_bridge/store.py"], lease_seconds=30,
+        )
+        self.assertEqual(cli.command_claim_task(claim_args), 0)
+        report = {
+            "subject": "Concurrent result", "body": "One immutable artifact survives retries.",
+            "changed_files": [], "commands": [],
+            "git_state": {"branch": "main", "commit_created": False},
+            "skipped_checks": [], "risks": [], "verification_verdict": "ALIGNED",
+            "next_safe_step": "Drive readback",
+        }
+        report_path = self.root / "concurrent-result-report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        database = cli.store()
+        start = threading.Barrier(3)
+        put_barrier = threading.Barrier(2)
+        results = []
+        original_put = database.put_message
+
+        def raced_put(*args, **kwargs):
+            put_barrier.wait(timeout=5)
+            return original_put(*args, **kwargs)
+
+        def produce_result():
+            start.wait(timeout=5)
+            results.append(cli.command_result(argparse.Namespace(
+                task_id=item["id"], report=str(report_path)
+            )))
+
+        with patch.object(cli, "store", return_value=database), patch.object(
+            cli, "now_utc", return_value="2026-08-20T15:30:00Z",
+        ), patch.object(database, "put_message", side_effect=raced_put):
+            threads = [threading.Thread(target=produce_result) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            start.wait(timeout=5)
+            for thread in threads:
+                thread.join(timeout=5)
+
+        self.assertEqual(sorted(results), [0, 0])
+        task = database.get_message(item["id"])
+        self.assertIsNotNone(task["result_message_id"])
+        result = database.get_message(task["result_message_id"])
+        artifact = Path(unquote(urlparse(result["source_uri"]).path))
+        self.assertTrue(artifact.is_file())
+        self.assertEqual(len(list(self.outbox.glob("*__response.json"))), 1)
 
     def test_existing_send_command_still_generates_a_valid_outbound_message(self):
         args = argparse.Namespace(
