@@ -10,7 +10,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 
 from .errors import RegistryBusy, RegistryConflict, RuntimeBoundaryError
 from .hashing import canonical_bytes, sha256_bytes
@@ -30,7 +30,72 @@ _ARTIFACT_TYPES = frozenset(
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _DISPOSABLE_MARKER = ".research-engine-disposable-lineage-fixture"
 _DISPOSABLE_MARKER_CONTENT = "research-engine-disposable-lineage-fixture-v1\n"
+_REGISTRY_MIGRATION = "001_experiment_registry.sql"
 _LINEAGE_MIGRATION = "002_lineage_foundation.sql"
+_COMPATIBILITY_MIGRATION = "003_lineage_compatibility_hardening.sql"
+
+# This is the only legacy 002 marker admitted by the A1/H0 compatibility path.
+# It is the byte-level marker held by the persisted A0 runtime, not a general
+# migration-checksum allowlist.
+_LEGACY_F36_LINEAGE_SHA256 = "f36dcfa089b599ad41fc7339eb75baea5437e1ed300382da322c4c37eaeda00f"
+_CURRENT_LINEAGE_SHA256 = "ce0395f281908425efd46fb40fbfb410fb216a4d5a887623b2d7ecc2e900f050"
+
+# sqlite_master fingerprints use canonical JSON of non-internal table/index and
+# trigger definitions with whitespace collapsed. They pin the accepted legacy
+# shape before any forward migration is allowed to write.
+_EXPECTED_BASE_SCHEMA_FINGERPRINT = "d7889df9e1ed47e81fcdd18b23e1efab2e4e310efa02f0122f80230448654027"
+_EXPECTED_F36_TRIGGER_FINGERPRINT = "f442e3cc08d9baede5917ef5ac4f8ddf8ae66752e21d222c54b31cfe16eb118b"
+_EXPECTED_FINAL_TRIGGER_FINGERPRINT = "10f4a9f33e819b7e416a58fe5f5ec71747b190529a2c409ae01246373ca2b629"
+_EXPECTED_A0_BASE_SCHEMA_FINGERPRINT = "8ef37f0c1c9fb652cc62c6630f06acaa59aa5051f82d9ae1e2a39fd631415774"
+_EXPECTED_NO_TRIGGER_FINGERPRINT = "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+
+_COMPATIBILITY_HARDENING_TRIGGERS = (
+    "relations_require_adjacent_chain",
+    "experiments_require_existing_contract",
+    "promotions_require_existing_artifacts",
+    "artifacts_no_replace",
+    "relations_no_replace",
+    "trials_no_replace",
+    "experiments_no_replace",
+    "promotions_no_replace",
+    "experiment_registry_no_replace",
+    "schema_migrations_no_replace",
+    "schema_migrations_no_update",
+    "schema_migrations_no_delete",
+    "experiment_registry_no_update",
+    "experiment_registry_no_delete",
+)
+
+_LEGACY_F36_RELATION_TRIGGER_SQL = """
+CREATE TRIGGER relations_require_adjacent_chain
+BEFORE INSERT ON relations
+FOR EACH ROW
+WHEN NOT (
+    (SELECT artifact_type FROM artifacts WHERE artifact_id = NEW.parent_artifact_id) = 'DataSnapshot'
+    AND (SELECT artifact_type FROM artifacts WHERE artifact_id = NEW.child_artifact_id) = 'ExperimentRun'
+    OR (SELECT artifact_type FROM artifacts WHERE artifact_id = NEW.parent_artifact_id) = 'ExperimentRun'
+    AND (SELECT artifact_type FROM artifacts WHERE artifact_id = NEW.child_artifact_id) = 'StrategyCandidate'
+    OR (SELECT artifact_type FROM artifacts WHERE artifact_id = NEW.parent_artifact_id) = 'StrategyCandidate'
+    AND (SELECT artifact_type FROM artifacts WHERE artifact_id = NEW.child_artifact_id) = 'StrategyPackage'
+    OR (SELECT artifact_type FROM artifacts WHERE artifact_id = NEW.parent_artifact_id) = 'StrategyPackage'
+    AND (SELECT artifact_type FROM artifacts WHERE artifact_id = NEW.child_artifact_id) = 'Replay'
+    OR (SELECT artifact_type FROM artifacts WHERE artifact_id = NEW.parent_artifact_id) = 'Replay'
+    AND (SELECT artifact_type FROM artifacts WHERE artifact_id = NEW.child_artifact_id) = 'Paper'
+    OR (SELECT artifact_type FROM artifacts WHERE artifact_id = NEW.parent_artifact_id) = 'Paper'
+    AND (SELECT artifact_type FROM artifacts WHERE artifact_id = NEW.child_artifact_id) = 'Decision'
+)
+BEGIN
+    SELECT RAISE(ABORT, 'invalid directional lineage relation');
+END;
+"""
+
+_SCHEMA_MIGRATIONS_NO_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER schema_migrations_no_delete
+BEFORE DELETE ON schema_migrations
+BEGIN
+    SELECT RAISE(ABORT, 'migration marker deletion is forbidden');
+END;
+"""
 
 
 @dataclass(frozen=True)
@@ -89,6 +154,14 @@ class LineageBundleResult:
     sqlite_read_elapsed_ns: int
 
 
+@dataclass(frozen=True)
+class _ArtifactEnsureResult:
+    """Resolved immutable artifact identity for an insert or exact replay."""
+
+    artifact_id: str
+    changed: bool
+
+
 class ExperimentRegistry:
     """A local SQLite boundary with one writer, immutable lineage, and safe migrations."""
 
@@ -102,26 +175,34 @@ class ExperimentRegistry:
         self._validate_storage_paths()
         connection = self._connect()
         try:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS schema_migrations (
-                    migration_name TEXT PRIMARY KEY,
-                    migration_sha256 TEXT NOT NULL,
-                    applied_at_ns INTEGER NOT NULL
-                )
-                """
-            )
-            for migration_path in self._migration_paths():
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as error:
+                raise RegistryBusy("registry initialization could not acquire the writer lock") from error
+
+            migration_paths = self._migration_paths()
+            migration_digests = {
+                path.name: sha256_bytes(self._read_migration(path))
+                for path in migration_paths
+            }
+            self._ensure_migration_ledger(connection)
+            legacy_marker = self._preflight_migration_state(connection, migration_digests)
+
+            for migration_path in migration_paths:
                 name = migration_path.name
                 raw = self._read_migration(migration_path)
-                digest = sha256_bytes(raw)
+                digest = migration_digests[name]
                 existing = connection.execute(
                     "SELECT migration_sha256 FROM schema_migrations WHERE migration_name = ?",
                     (name,),
                 ).fetchone()
                 if existing is not None:
-                    if existing[0] != digest:
+                    legacy_002 = (
+                        name == _LINEAGE_MIGRATION
+                        and existing[0] == _LEGACY_F36_LINEAGE_SHA256
+                        and legacy_marker == _LEGACY_F36_LINEAGE_SHA256
+                    )
+                    if existing[0] != digest and not legacy_002:
                         raise RegistryConflict(f"migration checksum changed after apply: {name}")
                     continue
                 self._execute_sql_script(connection, raw.decode("utf-8"))
@@ -132,6 +213,7 @@ class ExperimentRegistry:
                     """,
                     (name, digest, time.time_ns()),
                 )
+            self._preflight_migration_state(connection, migration_digests)
             connection.execute("COMMIT")
         except RegistryConflict:
             self._rollback(connection)
@@ -139,9 +221,6 @@ class ExperimentRegistry:
         except UnicodeDecodeError as error:
             self._rollback(connection)
             raise RegistryConflict("migration must be UTF-8 text") from error
-        except sqlite3.OperationalError as error:
-            self._rollback(connection)
-            raise RegistryBusy("registry initialization could not acquire the writer lock") from error
         except sqlite3.Error as error:
             self._rollback(connection)
             raise RegistryConflict("registry migration failed closed") from error
@@ -295,17 +374,25 @@ class ExperimentRegistry:
         try:
             connection.execute("BEGIN IMMEDIATE")
             changed = False
+            resolved_artifact_ids: dict[str, str] = {}
             for artifact in artifact_items:
-                changed = self._ensure_artifact_locked(connection, artifact, time.time_ns()) or changed
+                ensured = self._ensure_artifact_locked(connection, artifact, time.time_ns())
+                resolved_artifact_ids[artifact.artifact_id] = ensured.artifact_id
+                changed = ensured.changed or changed
             for parent_artifact_id, child_artifact_id in relation_items:
                 changed = (
-                    self._ensure_relation_locked(connection, parent_artifact_id, child_artifact_id, time.time_ns())
+                    self._ensure_relation_locked(
+                        connection,
+                        resolved_artifact_ids.get(parent_artifact_id, parent_artifact_id),
+                        resolved_artifact_ids.get(child_artifact_id, child_artifact_id),
+                        time.time_ns(),
+                    )
                     or changed
                 )
             connection.execute("COMMIT")
             elapsed = max(1, time.perf_counter_ns() - started)
             return LineageBundleResult(
-                artifact_ids=tuple(item.artifact_id for item in artifact_items),
+                artifact_ids=tuple(resolved_artifact_ids[item.artifact_id] for item in artifact_items),
                 reused=not changed,
                 sqlite_write_elapsed_ns=elapsed if changed else 0,
                 sqlite_read_elapsed_ns=0 if changed else elapsed,
@@ -323,13 +410,22 @@ class ExperimentRegistry:
             connection.close()
 
     def rollback_lineage_for_disposable_fixture(self) -> None:
-        """Reverse only the A1/H0 migration in a marked temporary test fixture."""
+        """Reverse A1/H0 migrations only in a marked temporary test fixture."""
         self._require_disposable_rollback_fixture()
         rollback_path = self._migration_dir / "rollback" / _LINEAGE_MIGRATION
         raw = self._read_migration(rollback_path)
         connection = self._connect()
         try:
-            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as error:
+                raise RegistryBusy("registry rollback could not acquire the writer lock") from error
+            compatibility_applied = connection.execute(
+                "SELECT 1 FROM schema_migrations WHERE migration_name = ?",
+                (_COMPATIBILITY_MIGRATION,),
+            ).fetchone()
+            if compatibility_applied is not None:
+                self._rollback_compatibility_locked(connection)
             applied = connection.execute(
                 "SELECT migration_sha256 FROM schema_migrations WHERE migration_name = ?",
                 (_LINEAGE_MIGRATION,),
@@ -348,14 +444,63 @@ class ExperimentRegistry:
         except UnicodeDecodeError as error:
             self._rollback(connection)
             raise RegistryConflict("rollback migration must be UTF-8 text") from error
-        except sqlite3.OperationalError as error:
-            self._rollback(connection)
-            raise RegistryBusy("registry rollback could not acquire the writer lock") from error
         except sqlite3.Error as error:
             self._rollback(connection)
             raise RegistryConflict("lineage rollback failed closed") from error
         finally:
             connection.close()
+
+    def rollback_compatibility_for_disposable_fixture(self) -> None:
+        """Reverse only 003 trigger convergence in a marked temporary fixture."""
+        self._require_disposable_rollback_fixture()
+        connection = self._connect()
+        try:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as error:
+                raise RegistryBusy("compatibility rollback could not acquire the writer lock") from error
+            self._rollback_compatibility_locked(connection)
+            connection.execute("COMMIT")
+        except RegistryConflict:
+            self._rollback(connection)
+            raise
+        except sqlite3.Error as error:
+            self._rollback(connection)
+            raise RegistryConflict("compatibility rollback failed closed") from error
+        finally:
+            connection.close()
+
+    def _rollback_compatibility_locked(self, connection: sqlite3.Connection) -> None:
+        """Restore the exact pre-003 trigger state without touching lineage data."""
+        migration_digests = self._migration_digests()
+        self._preflight_migration_state(connection, migration_digests)
+        marker = connection.execute(
+            "SELECT migration_sha256 FROM schema_migrations WHERE migration_name = ?",
+            (_LINEAGE_MIGRATION,),
+        ).fetchone()
+        compatibility = connection.execute(
+            "SELECT migration_sha256 FROM schema_migrations WHERE migration_name = ?",
+            (_COMPATIBILITY_MIGRATION,),
+        ).fetchone()
+        if marker is None or compatibility is None:
+            raise RegistryConflict("compatibility migration is not applied")
+
+        if marker[0] == _LEGACY_F36_LINEAGE_SHA256:
+            for trigger_name in _COMPATIBILITY_HARDENING_TRIGGERS:
+                connection.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
+            self._execute_sql_script(connection, _LEGACY_F36_RELATION_TRIGGER_SQL)
+        elif marker[0] == migration_digests.get(_LINEAGE_MIGRATION):
+            connection.execute("DROP TRIGGER IF EXISTS schema_migrations_no_delete")
+        else:
+            raise RegistryConflict("compatibility rollback does not recognize the 002 marker")
+
+        connection.execute(
+            "DELETE FROM schema_migrations WHERE migration_name = ?",
+            (_COMPATIBILITY_MIGRATION,),
+        )
+        if marker[0] == migration_digests.get(_LINEAGE_MIGRATION):
+            self._execute_sql_script(connection, _SCHEMA_MIGRATIONS_NO_DELETE_TRIGGER_SQL)
+        self._preflight_migration_state(connection, migration_digests)
 
     def _record_a0_lineage_locked(
         self,
@@ -396,16 +541,21 @@ class ExperimentRegistry:
                 "trial_id": trial_id,
             },
         )
-        self._ensure_artifact_locked(connection, snapshot, created_at_ns)
-        self._ensure_artifact_locked(connection, experiment_run, created_at_ns)
-        self._ensure_relation_locked(connection, snapshot.artifact_id, experiment_run.artifact_id, created_at_ns)
+        resolved_snapshot = self._ensure_artifact_locked(connection, snapshot, created_at_ns)
+        resolved_experiment_run = self._ensure_artifact_locked(connection, experiment_run, created_at_ns)
+        self._ensure_relation_locked(
+            connection,
+            resolved_snapshot.artifact_id,
+            resolved_experiment_run.artifact_id,
+            created_at_ns,
+        )
         self._ensure_trial_locked(connection, trial_id, strategy_family_id, created_at_ns)
         self._ensure_experiment_locked(
             connection,
             experiment_id=experiment_id,
             trial_id=trial_id,
-            data_snapshot_artifact_id=snapshot.artifact_id,
-            experiment_run_artifact_id=experiment_run.artifact_id,
+            data_snapshot_artifact_id=resolved_snapshot.artifact_id,
+            experiment_run_artifact_id=resolved_experiment_run.artifact_id,
             code_sha256=code_sha256,
             config_sha256=config_sha256,
             result_artifact_id=result_artifact_id,
@@ -417,7 +567,7 @@ class ExperimentRegistry:
         connection: sqlite3.Connection,
         artifact: LineageArtifact,
         created_at_ns: int,
-    ) -> bool:
+    ) -> _ArtifactEnsureResult:
         existing = connection.execute(
             """
             SELECT artifact_type, identity_sha256, content_sha256, canonical_payload_json
@@ -434,7 +584,7 @@ class ExperimentRegistry:
         if existing is not None:
             if tuple(existing) != expected:
                 raise RegistryConflict("artifact identifier maps to different immutable content")
-            return False
+            return _ArtifactEnsureResult(artifact.artifact_id, False)
 
         natural = connection.execute(
             """
@@ -444,9 +594,20 @@ class ExperimentRegistry:
             (artifact.artifact_type, artifact.identity_sha256),
         ).fetchone()
         if natural is not None:
-            if natural[0] != artifact.artifact_id or natural[1] != artifact.content_sha256 or natural[2] != artifact.canonical_payload_json:
+            legacy_artifact_id = self._resolve_legacy_a0_snapshot_artifact_id(
+                connection,
+                artifact,
+                natural,
+            )
+            if legacy_artifact_id is not None:
+                return _ArtifactEnsureResult(legacy_artifact_id, False)
+            if (
+                natural[0] != artifact.artifact_id
+                or natural[1] != artifact.content_sha256
+                or natural[2] != artifact.canonical_payload_json
+            ):
                 raise RegistryConflict("artifact identity maps to different immutable content")
-            return False
+            return _ArtifactEnsureResult(artifact.artifact_id, False)
 
         connection.execute(
             """
@@ -464,7 +625,73 @@ class ExperimentRegistry:
                 created_at_ns,
             ),
         )
-        return True
+        return _ArtifactEnsureResult(artifact.artifact_id, True)
+
+    @staticmethod
+    def _resolve_legacy_a0_snapshot_artifact_id(
+        connection: sqlite3.Connection,
+        artifact: LineageArtifact,
+        natural: Any,
+    ) -> str | None:
+        """Reuse only a self-consistent f36 A0 snapshot without rewriting it."""
+        if artifact.artifact_type != "DataSnapshot":
+            return None
+        marker = connection.execute(
+            "SELECT migration_sha256 FROM schema_migrations WHERE migration_name = ?",
+            (_LINEAGE_MIGRATION,),
+        ).fetchone()
+        if marker is None or marker[0] != _LEGACY_F36_LINEAGE_SHA256:
+            return None
+
+        artifact_id, content_sha256, payload_json = natural
+        if content_sha256 != artifact.content_sha256:
+            return None
+        try:
+            payload = json.loads(payload_json)
+        except (TypeError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict) or canonical_bytes(payload).decode("ascii") != payload_json:
+            return None
+        if set(payload) != {"dataset_identity", "dataset_path", "dataset_sha256"}:
+            return None
+        if (
+            payload["dataset_identity"] != artifact.identity_sha256
+            or payload["dataset_sha256"] != artifact.content_sha256
+            or not isinstance(payload["dataset_path"], str)
+            or not payload["dataset_path"]
+        ):
+            return None
+        try:
+            legacy = LineageArtifact(
+                artifact_type="DataSnapshot",
+                identity_sha256=artifact.identity_sha256,
+                content_sha256=artifact.content_sha256,
+                payload=payload,
+            )
+        except RegistryConflict:
+            return None
+        if legacy.artifact_id != artifact_id:
+            return None
+        linked = connection.execute(
+            """
+            SELECT 1
+            FROM experiments AS experiment
+            JOIN experiment_registry AS registry
+              ON registry.experiment_id = experiment.experiment_id
+            WHERE experiment.data_snapshot_artifact_id = ?
+              AND registry.dataset_identity = ?
+              AND registry.dataset_sha256 = ?
+              AND registry.dataset_path = ?
+            LIMIT 1
+            """,
+            (
+                artifact_id,
+                artifact.identity_sha256,
+                artifact.content_sha256,
+                payload["dataset_path"],
+            ),
+        ).fetchone()
+        return artifact_id if linked is not None else None
 
     @staticmethod
     def _ensure_relation_locked(
@@ -578,6 +805,240 @@ class ExperimentRegistry:
             ),
         )
         return True
+
+    def _migration_digests(self) -> dict[str, str]:
+        return {
+            path.name: sha256_bytes(self._read_migration(path))
+            for path in self._migration_paths()
+        }
+
+    @staticmethod
+    def _ensure_migration_ledger(connection: sqlite3.Connection) -> None:
+        ledger_exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
+        ).fetchone()
+        if ledger_exists is None:
+            existing = connection.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type IN ('table', 'index', 'trigger') AND name NOT LIKE 'sqlite_%'
+                """
+            ).fetchall()
+            if existing:
+                raise RegistryConflict("unversioned SQLite schema is not a blank registry")
+            connection.execute(
+                """
+                CREATE TABLE schema_migrations (
+                    migration_name TEXT PRIMARY KEY,
+                    migration_sha256 TEXT NOT NULL,
+                    applied_at_ns INTEGER NOT NULL
+                )
+                """
+            )
+            return
+
+        columns = tuple(
+            connection.execute("PRAGMA table_info(schema_migrations)").fetchall()
+        )
+        expected = (
+            (0, "migration_name", "TEXT", 0, None, 1),
+            (1, "migration_sha256", "TEXT", 1, None, 0),
+            (2, "applied_at_ns", "INTEGER", 1, None, 0),
+        )
+        if tuple(tuple(column) for column in columns) != expected:
+            raise RegistryConflict("migration ledger schema is not recognized")
+
+    def _preflight_migration_state(
+        self,
+        connection: sqlite3.Connection,
+        migration_digests: dict[str, str],
+    ) -> Optional[str]:
+        required_local = {_REGISTRY_MIGRATION, _LINEAGE_MIGRATION, _COMPATIBILITY_MIGRATION}
+        if not required_local.issubset(migration_digests):
+            raise RegistryConflict("required A1/H0 migrations are missing")
+        rows = tuple(
+            connection.execute(
+                "SELECT migration_name, migration_sha256 FROM schema_migrations ORDER BY migration_name"
+            ).fetchall()
+        )
+        if not rows:
+            objects = tuple(
+                connection.execute(
+                    """
+                    SELECT type, name FROM sqlite_master
+                    WHERE name NOT LIKE 'sqlite_%'
+                    ORDER BY type, name
+                    """
+                ).fetchall()
+            )
+            if objects != (("table", "schema_migrations"),):
+                raise RegistryConflict("empty migration ledger is not a blank registry")
+            return None
+        ledger = {name: digest for name, digest in rows}
+        allowed = {_REGISTRY_MIGRATION, _LINEAGE_MIGRATION, _COMPATIBILITY_MIGRATION}
+        unexpected = set(ledger) - allowed
+        if unexpected:
+            raise RegistryConflict("unknown or newer migration marker is applied")
+        if set(ledger) == {_REGISTRY_MIGRATION}:
+            self._assert_database_integrity(connection)
+            base_fingerprint, trigger_fingerprint = self._schema_fingerprints(connection)
+            if (
+                base_fingerprint != _EXPECTED_A0_BASE_SCHEMA_FINGERPRINT
+                or trigger_fingerprint != _EXPECTED_NO_TRIGGER_FINGERPRINT
+            ):
+                raise RegistryConflict("A0 registry schema fingerprint is not recognized")
+            return None
+        if set(ledger) - {_REGISTRY_MIGRATION, _LINEAGE_MIGRATION} and _COMPATIBILITY_MIGRATION not in ledger:
+            raise RegistryConflict("migration ledger order is not recognized")
+        if _REGISTRY_MIGRATION not in ledger or _LINEAGE_MIGRATION not in ledger:
+            raise RegistryConflict("migration ledger is incomplete")
+        if ledger[_REGISTRY_MIGRATION] != migration_digests[_REGISTRY_MIGRATION]:
+            raise RegistryConflict("registry migration checksum changed after apply")
+
+        lineage_digest = ledger[_LINEAGE_MIGRATION]
+        if lineage_digest == _LEGACY_F36_LINEAGE_SHA256:
+            if migration_digests[_LINEAGE_MIGRATION] != _CURRENT_LINEAGE_SHA256:
+                raise RegistryConflict("legacy compatibility target does not match the verified 002 migration")
+            expected_trigger_fingerprint = (
+                _EXPECTED_FINAL_TRIGGER_FINGERPRINT
+                if _COMPATIBILITY_MIGRATION in ledger
+                else _EXPECTED_F36_TRIGGER_FINGERPRINT
+            )
+        elif lineage_digest == migration_digests[_LINEAGE_MIGRATION]:
+            expected_trigger_fingerprint = _EXPECTED_FINAL_TRIGGER_FINGERPRINT
+        else:
+            raise RegistryConflict("lineage migration checksum is not a recognized A1/H0 state")
+
+        if _COMPATIBILITY_MIGRATION in ledger:
+            if ledger[_COMPATIBILITY_MIGRATION] != migration_digests[_COMPATIBILITY_MIGRATION]:
+                raise RegistryConflict("compatibility migration checksum changed after apply")
+        elif set(ledger) != {_REGISTRY_MIGRATION, _LINEAGE_MIGRATION}:
+            raise RegistryConflict("migration ledger contains an unsupported partial state")
+
+        self._assert_database_integrity(connection)
+        self._assert_schema_fingerprint(connection, expected_trigger_fingerprint)
+        self._validate_persisted_lineage(connection)
+        return lineage_digest
+
+    @staticmethod
+    def _assert_database_integrity(connection: sqlite3.Connection) -> None:
+        integrity = tuple(connection.execute("PRAGMA integrity_check").fetchall())
+        if integrity != (("ok",),):
+            raise RegistryConflict("SQLite integrity check failed before migration")
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise RegistryConflict("SQLite foreign-key check failed before migration")
+
+    @staticmethod
+    def _assert_schema_fingerprint(
+        connection: sqlite3.Connection,
+        expected_trigger_fingerprint: str,
+    ) -> None:
+        base_fingerprint, trigger_fingerprint = ExperimentRegistry._schema_fingerprints(connection)
+        if base_fingerprint != _EXPECTED_BASE_SCHEMA_FINGERPRINT:
+            raise RegistryConflict("SQLite table/index schema fingerprint is not recognized")
+        if trigger_fingerprint != expected_trigger_fingerprint:
+            raise RegistryConflict("SQLite trigger schema fingerprint is not recognized")
+
+    @staticmethod
+    def _schema_fingerprints(connection: sqlite3.Connection) -> tuple[str, str]:
+        rows = connection.execute(
+            """
+            SELECT type, name, tbl_name, sql
+            FROM sqlite_master
+            WHERE type IN ('table', 'index', 'trigger')
+              AND name NOT LIKE 'sqlite_%'
+            ORDER BY type, name
+            """
+        ).fetchall()
+        base: list[dict[str, str]] = []
+        triggers: list[dict[str, str]] = []
+        for object_type, name, table_name, sql in rows:
+            if sql is None:
+                continue
+            entry = {
+                "type": object_type,
+                "name": name,
+                "table": table_name,
+                "sql": re.sub(r"\s+", " ", sql.strip()),
+            }
+            if object_type == "trigger":
+                triggers.append(entry)
+            else:
+                base.append(entry)
+        return sha256_bytes(canonical_bytes(base)), sha256_bytes(canonical_bytes(triggers))
+
+    @staticmethod
+    def _validate_persisted_lineage(connection: sqlite3.Connection) -> None:
+        for result_artifact_id, canonical_summary_json in connection.execute(
+            "SELECT result_artifact_id, canonical_summary_json FROM experiment_registry"
+        ):
+            try:
+                summary = json.loads(canonical_summary_json)
+            except (TypeError, json.JSONDecodeError) as error:
+                raise RegistryConflict("stored experiment summary is not canonical JSON") from error
+            if not isinstance(summary, dict) or canonical_bytes(summary).decode("ascii") != canonical_summary_json:
+                raise RegistryConflict("stored experiment summary is not canonical JSON")
+            if result_artifact_id != sha256_bytes(canonical_summary_json.encode("ascii")):
+                raise RegistryConflict("stored experiment summary hash does not match")
+
+        for artifact_id, artifact_type, identity_sha256, content_sha256, payload_json in connection.execute(
+            """
+            SELECT artifact_id, artifact_type, identity_sha256, content_sha256, canonical_payload_json
+            FROM artifacts
+            """
+        ):
+            try:
+                payload = json.loads(payload_json)
+                artifact = LineageArtifact(
+                    artifact_type=artifact_type,
+                    identity_sha256=identity_sha256,
+                    content_sha256=content_sha256,
+                    payload=payload,
+                )
+            except (TypeError, json.JSONDecodeError, RegistryConflict) as error:
+                raise RegistryConflict("stored artifact is not immutable canonical content") from error
+            if not isinstance(payload, dict) or artifact.canonical_payload_json != payload_json:
+                raise RegistryConflict("stored artifact payload is not canonical JSON")
+            if artifact.artifact_id != artifact_id:
+                raise RegistryConflict("stored artifact identifier does not match its immutable payload")
+
+        allowed_edges = {
+            ("DataSnapshot", "ExperimentRun"),
+            ("ExperimentRun", "StrategyCandidate"),
+            ("StrategyCandidate", "StrategyPackage"),
+            ("StrategyPackage", "Replay"),
+            ("Replay", "Paper"),
+            ("Paper", "Decision"),
+        }
+        for parent_type, child_type in connection.execute(
+            """
+            SELECT parent.artifact_type, child.artifact_type
+            FROM relations
+            JOIN artifacts AS parent ON parent.artifact_id = relations.parent_artifact_id
+            JOIN artifacts AS child ON child.artifact_id = relations.child_artifact_id
+            """
+        ):
+            if (parent_type, child_type) not in allowed_edges:
+                raise RegistryConflict("stored lineage relation is not an adjacent canonical edge")
+
+        invalid_experiment = connection.execute(
+            """
+            SELECT 1
+            FROM experiments
+            JOIN experiment_registry AS registry
+              ON registry.experiment_id = experiments.experiment_id
+            JOIN artifacts AS snapshot
+              ON snapshot.artifact_id = experiments.data_snapshot_artifact_id
+            JOIN artifacts AS run
+              ON run.artifact_id = experiments.experiment_run_artifact_id
+            WHERE snapshot.artifact_type <> 'DataSnapshot'
+               OR run.artifact_type <> 'ExperimentRun'
+               OR experiments.result_artifact_id <> registry.result_artifact_id
+            LIMIT 1
+            """
+        ).fetchone()
+        if invalid_experiment is not None:
+            raise RegistryConflict("stored experiment lineage is not canonical")
 
     def _connect(self) -> sqlite3.Connection:
         self._validate_storage_paths()

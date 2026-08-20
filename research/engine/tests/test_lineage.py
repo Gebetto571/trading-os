@@ -442,7 +442,7 @@ class LineageAcceptanceTests(unittest.TestCase):
                     digest("legacy-dataset"),
                     digest("legacy-code"),
                     digest("legacy-config"),
-                    digest("legacy-result"),
+                    sha256_bytes(canonical_bytes({})),
                     "{}",
                 ),
             )
