@@ -15,6 +15,13 @@ if str(ENGINE_ROOT) not in sys.path:
 
 from research_engine.errors import RegistryConflict
 from research_engine.hashing import canonical_bytes, sha256_bytes, sha256_file
+from research_engine.overfitting import (
+    CscvPartition,
+    DEFAULT_POLICY,
+    OverfittingEvidence,
+    RegimeScore,
+    WalkForwardFold,
+)
 from research_engine.registry import ExperimentRegistry, LineageArtifact
 from research_engine.runner import run_experiment
 
@@ -35,6 +42,33 @@ def artifact(artifact_type: str, identity: str, content: str, label: str) -> Lin
         identity_sha256=digest(identity),
         content_sha256=digest(content),
         payload={"contract_label": label},
+    )
+
+
+def passing_overfitting_evidence() -> OverfittingEvidence:
+    """A compact deterministic proof used only to preserve D0 stage coverage."""
+    return OverfittingEvidence(
+        policy=DEFAULT_POLICY,
+        walk_forward_folds=(
+            WalkForwardFold(0, 10, 12, 20, 22, 30, 2, 2, 12, 10),
+            WalkForwardFold(10, 20, 22, 30, 32, 40, 2, 2, 12, 10),
+            WalkForwardFold(20, 30, 32, 40, 42, 50, 2, 2, 12, 10),
+        ),
+        raw_p_value_ppm=10_000,
+        cscv_partitions=(
+            CscvPartition((12, 8), (12, 8)),
+            CscvPartition((8, 12), (8, 12)),
+        ),
+        regime_scores=(
+            RegimeScore("BULL", 8),
+            RegimeScore("RANGE", 7),
+            RegimeScore("BEAR", 6),
+        ),
+        center_oos_score_bps=10,
+        neighbor_oos_scores_bps=(7, 8),
+        baseline_cost_bps=5,
+        stressed_cost_bps=10,
+        stressed_oos_score_bps=4,
     )
 
 
@@ -245,6 +279,13 @@ class LineageAcceptanceTests(unittest.TestCase):
                 )
         finally:
             raw_connection.close()
+        assessment = self.registry.record_overfitting_assessment(
+            trial_id=first.trial_id,
+            evidence_artifact_id=evidence.artifact_id,
+            evidence=passing_overfitting_evidence(),
+            recorded_at_ns=5,
+        )
+        self.assertEqual(assessment.trial_count, 2)
         candidate = self.registry.advance_trial_stage(
             trial_id=first.trial_id,
             to_stage="CANDIDATE",

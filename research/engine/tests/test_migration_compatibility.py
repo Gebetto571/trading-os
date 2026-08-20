@@ -109,10 +109,17 @@ def _metadata_snapshot(database: Path) -> dict[str, object]:
                 "evidence_artifact_id, recorded_at_ns FROM trial_stage_transitions "
                 "ORDER BY stage_transition_id",
             )
+            snapshot["overfitting_assessments"] = _rows(
+                connection,
+                "SELECT assessment_id, trial_id, evidence_artifact_id, trial_count, "
+                "policy_sha256, canonical_evidence_json, evidence_sha256, recorded_at_ns, passed "
+                "FROM overfitting_assessments ORDER BY assessment_id",
+            ) if "overfitting_assessments" in tables else ()
         else:
             snapshot["trial_identities"] = ()
             snapshot["holdout_accesses"] = ()
             snapshot["trial_stage_transitions"] = ()
+            snapshot["overfitting_assessments"] = ()
         return snapshot
     finally:
         connection.close()
@@ -297,8 +304,8 @@ class MigrationCompatibilityTests(unittest.TestCase):
             self.assertEqual(
                 ExperimentRegistry._schema_fingerprints(connection),
                 (
-                    registry_module._EXPECTED_D0_BASE_SCHEMA_FINGERPRINT,
-                    registry_module._EXPECTED_D0_TRIGGER_FINGERPRINT,
+                    registry_module._EXPECTED_D_BASE_SCHEMA_FINGERPRINT,
+                    registry_module._EXPECTED_D_TRIGGER_FINGERPRINT,
                 ),
             )
             self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
@@ -322,6 +329,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
                     registry_module._LINEAGE_MIGRATION,
                     registry_module._COMPATIBILITY_MIGRATION,
                     registry_module._D0_MIGRATION,
+                    registry_module._D_MIGRATION,
                 ),
             )
 
@@ -345,9 +353,11 @@ class MigrationCompatibilityTests(unittest.TestCase):
             self.assertEqual(after["trial_identities"], ())
             self.assertEqual(after["holdout_accesses"], ())
             self.assertEqual(after["trial_stage_transitions"], ())
+            self.assertEqual(after["overfitting_assessments"], ())
             self.assertEqual(after["ledger"][:2], before["ledger"])
-            self.assertEqual(after["ledger"][-2][0], registry_module._COMPATIBILITY_MIGRATION)
-            self.assertEqual(after["ledger"][-1][0], registry_module._D0_MIGRATION)
+            self.assertEqual(after["ledger"][-3][0], registry_module._COMPATIBILITY_MIGRATION)
+            self.assertEqual(after["ledger"][-2][0], registry_module._D0_MIGRATION)
+            self.assertEqual(after["ledger"][-1][0], registry_module._D_MIGRATION)
 
             registry.initialize()
             self.assertEqual(_metadata_snapshot(database), after)
@@ -388,6 +398,12 @@ class MigrationCompatibilityTests(unittest.TestCase):
                     connection.execute(
                         "SELECT 1 FROM schema_migrations WHERE migration_name = ?",
                         (registry_module._D0_MIGRATION,),
+                    ).fetchone(),
+                )
+                self.assertIsNotNone(
+                    connection.execute(
+                        "SELECT 1 FROM schema_migrations WHERE migration_name = ?",
+                        (registry_module._D_MIGRATION,),
                     ).fetchone(),
                 )
             finally:
@@ -573,7 +589,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
             try:
                 connection.execute(
                     "INSERT INTO schema_migrations VALUES (?, ?, ?)",
-                    ("005_future.sql", digest("future-migration"), 9),
+                    ("006_future.sql", digest("future-migration"), 9),
                 )
                 connection.commit()
             finally:
@@ -619,7 +635,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
             self._make_f36_fixture(failing_database)
             copied_migrations = root / "migrations"
             shutil.copytree(MIGRATIONS, copied_migrations)
-            (copied_migrations / "005_injected_failure.sql").write_text(
+            (copied_migrations / "006_injected_failure.sql").write_text(
                 "CREATE TABLE injected_failure_probe (id INTEGER);\nSELECT unknown_function();\n",
                 encoding="utf-8",
             )

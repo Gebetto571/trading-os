@@ -10,10 +10,13 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from .errors import RegistryBusy, RegistryConflict, RuntimeBoundaryError
 from .hashing import canonical_bytes, sha256_bytes
+
+if TYPE_CHECKING:
+    from .overfitting import OverfittingEvidence
 
 
 _ARTIFACT_TYPES = frozenset(
@@ -34,6 +37,7 @@ _REGISTRY_MIGRATION = "001_experiment_registry.sql"
 _LINEAGE_MIGRATION = "002_lineage_foundation.sql"
 _COMPATIBILITY_MIGRATION = "003_lineage_compatibility_hardening.sql"
 _D0_MIGRATION = "004_trial_identity_holdout_gate.sql"
+_D_MIGRATION = "005_overfitting_safety_gate.sql"
 _TRIAL_STAGES = (
     "EXPLORATORY",
     "CANDIDATE",
@@ -64,6 +68,10 @@ _EXPECTED_NO_TRIGGER_FINGERPRINT = "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11
 # its marker. They cover tables/indexes and triggers independently.
 _EXPECTED_D0_BASE_SCHEMA_FINGERPRINT = "829457983564825ae719a9c05cefccff8dad77e98e405c833bab858e7bf020a0"
 _EXPECTED_D0_TRIGGER_FINGERPRINT = "2b3ba2c20a5260e075b5bdc76adb4bbe1b8bdb540629111d86e35659b552dff1"
+# Bound after the add-only D migration is finalized.  These constants pin both
+# the table/index shape and all immutable/raw-SQL gate triggers.
+_EXPECTED_D_BASE_SCHEMA_FINGERPRINT = "af7dfe980f3e3939bb52188095a8205364b8585e5edc3da1fa9c28ab4b602488"
+_EXPECTED_D_TRIGGER_FINGERPRINT = "d5a288dd39057136acfbc9a534a0a1fdd08e1a638b784bc34e977113ad15bf14"
 
 _COMPATIBILITY_HARDENING_TRIGGERS = (
     "relations_require_adjacent_chain",
@@ -198,6 +206,20 @@ class TrialStageResult:
     stage_transition_id: str
     trial_id: str
     stage: str
+    reused: bool
+    sqlite_write_elapsed_ns: int
+    sqlite_read_elapsed_ns: int
+
+
+@dataclass(frozen=True)
+class OverfittingAssessmentResult:
+    """Immutable D assessment write or exact replay outcome."""
+
+    assessment_id: str
+    trial_id: str
+    evidence_artifact_id: str
+    trial_count: int
+    policy_sha256: str
     reused: bool
     sqlite_write_elapsed_ns: int
     sqlite_read_elapsed_ns: int
@@ -693,6 +715,179 @@ class ExperimentRegistry:
         finally:
             connection.close()
 
+    def record_overfitting_assessment(
+        self,
+        *,
+        trial_id: str,
+        evidence_artifact_id: str,
+        evidence: OverfittingEvidence,
+        recorded_at_ns: int,
+    ) -> OverfittingAssessmentResult:
+        """Persist one passing D proof, or return only its exact immutable replay.
+
+        The calculation is intentionally outside the exploratory runner.  This
+        transaction binds the proof to an already-completed immutable run and
+        the deterministic family/dataset trial count observed at assessment
+        time; a later additional trial therefore invalidates it for a *new*
+        promotion until new evidence is recorded.
+        """
+        _require_sha256(trial_id, "trial_id")
+        _require_sha256(evidence_artifact_id, "evidence_artifact_id")
+        _require_nonnegative_integer(recorded_at_ns, "recorded_at_ns")
+        from .overfitting import (
+            OverfittingEvidence,
+            OverfittingValidationError,
+            validate_and_canonicalize,
+        )
+
+        if not isinstance(evidence, OverfittingEvidence):
+            raise RegistryConflict("overfitting evidence has an unsupported type")
+
+        started = time.perf_counter_ns()
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_d_migration_locked(connection)
+            self._validate_persisted_d(connection)
+            self._require_trial_bound_stage_evidence_locked(
+                connection,
+                trial_id,
+                evidence_artifact_id,
+            )
+            self._reject_holdout_for_overfitting_locked(connection, trial_id)
+            identity = connection.execute(
+                """
+                SELECT strategy_family_id, data_snapshot_artifact_id, dataset_sha256, created_at_ns
+                FROM trial_identities WHERE trial_id = ?
+                """,
+                (trial_id,),
+            ).fetchone()
+            if identity is None:
+                raise RegistryConflict("overfitting assessment trial identity is missing")
+            strategy_family_id, data_snapshot_artifact_id, dataset_sha256, created_at_ns = tuple(identity)
+            if recorded_at_ns < created_at_ns:
+                raise RegistryConflict("overfitting assessment predates its immutable trial identity")
+            trial_count = self._trial_count_at_locked(
+                connection,
+                strategy_family_id,
+                data_snapshot_artifact_id,
+                dataset_sha256,
+                recorded_at_ns,
+            )
+            try:
+                canonical_evidence = validate_and_canonicalize(evidence, trial_count)
+            except OverfittingValidationError as error:
+                raise RegistryConflict("overfitting evidence failed closed") from error
+            evidence_json = canonical_bytes(canonical_evidence).decode("ascii")
+            evidence_sha256 = sha256_bytes(evidence_json.encode("ascii"))
+            policy_sha256 = canonical_evidence["policy_sha256"]
+            assessment_id = self._assessment_identifier(
+                trial_id,
+                evidence_artifact_id,
+                trial_count,
+                policy_sha256,
+                evidence_sha256,
+                recorded_at_ns,
+            )
+            expected = (
+                trial_id,
+                evidence_artifact_id,
+                trial_count,
+                policy_sha256,
+                evidence_json,
+                evidence_sha256,
+                recorded_at_ns,
+                1,
+            )
+            existing = connection.execute(
+                """
+                SELECT trial_id, evidence_artifact_id, trial_count, policy_sha256,
+                       canonical_evidence_json, evidence_sha256, recorded_at_ns, passed
+                FROM overfitting_assessments WHERE assessment_id = ?
+                """,
+                (assessment_id,),
+            ).fetchone()
+            if existing is not None:
+                if tuple(existing) != expected:
+                    raise RegistryConflict("overfitting assessment identifier maps to different immutable proof")
+                connection.execute("COMMIT")
+                return OverfittingAssessmentResult(
+                    assessment_id=assessment_id,
+                    trial_id=trial_id,
+                    evidence_artifact_id=evidence_artifact_id,
+                    trial_count=trial_count,
+                    policy_sha256=policy_sha256,
+                    reused=True,
+                    sqlite_write_elapsed_ns=0,
+                    sqlite_read_elapsed_ns=max(1, time.perf_counter_ns() - started),
+                )
+            natural = connection.execute(
+                """
+                SELECT assessment_id FROM overfitting_assessments
+                WHERE trial_id = ? AND evidence_artifact_id = ?
+                """,
+                (trial_id, evidence_artifact_id),
+            ).fetchone()
+            if natural is not None:
+                raise RegistryConflict("trial/run already has a different immutable overfitting assessment")
+            connection.execute(
+                """
+                INSERT INTO overfitting_assessments (
+                    assessment_id, trial_id, evidence_artifact_id, trial_count,
+                    policy_sha256, canonical_evidence_json, evidence_sha256,
+                    recorded_at_ns, passed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                """,
+                (
+                    assessment_id,
+                    trial_id,
+                    evidence_artifact_id,
+                    trial_count,
+                    policy_sha256,
+                    evidence_json,
+                    evidence_sha256,
+                    recorded_at_ns,
+                ),
+            )
+            connection.execute("COMMIT")
+            return OverfittingAssessmentResult(
+                assessment_id=assessment_id,
+                trial_id=trial_id,
+                evidence_artifact_id=evidence_artifact_id,
+                trial_count=trial_count,
+                policy_sha256=policy_sha256,
+                reused=False,
+                sqlite_write_elapsed_ns=max(1, time.perf_counter_ns() - started),
+                sqlite_read_elapsed_ns=0,
+            )
+        except RegistryConflict:
+            self._rollback(connection)
+            raise
+        except sqlite3.IntegrityError as error:
+            self._rollback(connection)
+            raise RegistryConflict("overfitting assessment integrity rejected") from error
+        except sqlite3.OperationalError as error:
+            self._rollback(connection)
+            raise RegistryBusy("registry writer is already held by another process") from error
+        finally:
+            connection.close()
+
+    def verify_overfitting_assessments(self) -> None:
+        """Explicitly audit all persisted D proofs without touching the runner path.
+
+        ``run_experiment`` deliberately calls only ``initialize`` and never
+        imports or scans D evidence.  Promotion and D writes already perform
+        this audit fail-closed; callers that need a complete offline integrity
+        audit can invoke this method explicitly.
+        """
+        connection = self._connect()
+        try:
+            self._require_d_migration_locked(connection)
+            self._assert_database_integrity(connection)
+            self._validate_persisted_d(connection)
+        finally:
+            connection.close()
+
     def advance_trial_stage(
         self,
         *,
@@ -712,11 +907,6 @@ class ExperimentRegistry:
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
-            self._require_trial_bound_stage_evidence_locked(
-                connection,
-                trial_id,
-                evidence_artifact_id,
-            )
             existing = connection.execute(
                 """
                 SELECT stage_transition_id, from_stage, evidence_artifact_id, recorded_at_ns
@@ -745,6 +935,16 @@ class ExperimentRegistry:
                     sqlite_write_elapsed_ns=0,
                     sqlite_read_elapsed_ns=max(1, time.perf_counter_ns() - started),
                 )
+            self._require_trial_bound_stage_evidence_locked(
+                connection,
+                trial_id,
+                evidence_artifact_id,
+            )
+            self._require_passed_overfitting_assessment_locked(
+                connection,
+                trial_id,
+                evidence_artifact_id,
+            )
             current_stage = self._current_trial_stage_locked(connection, trial_id)
             if current_stage != from_stage:
                 raise RegistryConflict("trial stage transition does not follow the current immutable stage")
@@ -1242,6 +1442,63 @@ class ExperimentRegistry:
             raise RegistryConflict("holdout access is forbidden after candidate-or-higher promotion")
 
     @staticmethod
+    def _require_d_migration_locked(connection: sqlite3.Connection) -> None:
+        if connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE migration_name = ?",
+            (_D_MIGRATION,),
+        ).fetchone() is None:
+            raise RegistryConflict("D overfitting-safety migration is not applied")
+
+    @staticmethod
+    def _reject_holdout_for_overfitting_locked(
+        connection: sqlite3.Connection,
+        trial_id: str,
+    ) -> None:
+        if connection.execute(
+            "SELECT 1 FROM holdout_accesses WHERE trial_id = ? LIMIT 1",
+            (trial_id,),
+        ).fetchone() is not None:
+            raise RegistryConflict("holdout access blocks candidate-or-higher promotion")
+
+    def _require_passed_overfitting_assessment_locked(
+        self,
+        connection: sqlite3.Connection,
+        trial_id: str,
+        evidence_artifact_id: str,
+    ) -> None:
+        """Require a current-count, same-run D proof for a new upper-stage insert."""
+        self._require_d_migration_locked(connection)
+        self._reject_holdout_for_overfitting_locked(connection, trial_id)
+        # A normal SQLite connection cannot insert a D proof (005 requires a
+        # registry-local hashing function), but validate again here as defense
+        # in depth before a promotion observes any persisted assessment row.
+        self._validate_persisted_d(connection)
+        identity = connection.execute(
+            """
+            SELECT strategy_family_id, data_snapshot_artifact_id, dataset_sha256
+            FROM trial_identities WHERE trial_id = ?
+            """,
+            (trial_id,),
+        ).fetchone()
+        if identity is None:
+            raise RegistryConflict("trial identity is missing for overfitting assessment")
+        current_trial_count = self._trial_count_locked(connection, *tuple(identity))
+        assessment = connection.execute(
+            """
+            SELECT 1 FROM overfitting_assessments
+            WHERE trial_id = ?
+              AND evidence_artifact_id = ?
+              AND trial_count = ?
+              AND passed = 1
+            """,
+            (trial_id, evidence_artifact_id, current_trial_count),
+        ).fetchone()
+        if assessment is None:
+            raise RegistryConflict(
+                "candidate-or-higher stage requires a current passed overfitting assessment"
+            )
+
+    @staticmethod
     def _require_trial_bound_stage_evidence_locked(
         connection: sqlite3.Connection,
         trial_id: str,
@@ -1303,6 +1560,33 @@ class ExperimentRegistry:
         )
 
     @staticmethod
+    def _trial_count_at_locked(
+        connection: sqlite3.Connection,
+        strategy_family_id: str,
+        data_snapshot_artifact_id: str,
+        dataset_sha256: str,
+        recorded_at_ns: int,
+    ) -> int:
+        """Count only identities already durable at an explicit assessment time."""
+        return int(
+            connection.execute(
+                """
+                SELECT COUNT(*) FROM trial_identities
+                WHERE strategy_family_id = ?
+                  AND data_snapshot_artifact_id = ?
+                  AND dataset_sha256 = ?
+                  AND created_at_ns <= ?
+                """,
+                (
+                    strategy_family_id,
+                    data_snapshot_artifact_id,
+                    dataset_sha256,
+                    recorded_at_ns,
+                ),
+            ).fetchone()[0]
+        )
+
+    @staticmethod
     def _stage_transition_identifier(
         trial_id: str,
         from_stage: str | None,
@@ -1317,6 +1601,28 @@ class ExperimentRegistry:
                     "from_stage": from_stage,
                     "recorded_at_ns": recorded_at_ns,
                     "to_stage": to_stage,
+                    "trial_id": trial_id,
+                }
+            )
+        )
+
+    @staticmethod
+    def _assessment_identifier(
+        trial_id: str,
+        evidence_artifact_id: str,
+        trial_count: int,
+        policy_sha256: str,
+        evidence_sha256: str,
+        recorded_at_ns: int,
+    ) -> str:
+        return sha256_bytes(
+            canonical_bytes(
+                {
+                    "evidence_artifact_id": evidence_artifact_id,
+                    "evidence_sha256": evidence_sha256,
+                    "policy_sha256": policy_sha256,
+                    "recorded_at_ns": recorded_at_ns,
+                    "trial_count": trial_count,
                     "trial_id": trial_id,
                 }
             )
@@ -1445,9 +1751,10 @@ class ExperimentRegistry:
             _LINEAGE_MIGRATION,
             _COMPATIBILITY_MIGRATION,
             _D0_MIGRATION,
+            _D_MIGRATION,
         }
         if not required_local.issubset(migration_digests):
-            raise RegistryConflict("required A1/H0 and D0 migrations are missing")
+            raise RegistryConflict("required A1/H0, D0, and D migrations are missing")
         rows = tuple(
             connection.execute(
                 "SELECT migration_name, migration_sha256 FROM schema_migrations ORDER BY migration_name"
@@ -1506,6 +1813,7 @@ class ExperimentRegistry:
 
         compatibility_applied = _COMPATIBILITY_MIGRATION in ledger
         d0_applied = _D0_MIGRATION in ledger
+        d_applied = _D_MIGRATION in ledger
         if compatibility_applied:
             if ledger[_COMPATIBILITY_MIGRATION] != migration_digests[_COMPATIBILITY_MIGRATION]:
                 raise RegistryConflict("compatibility migration checksum changed after apply")
@@ -1516,6 +1824,14 @@ class ExperimentRegistry:
                 raise RegistryConflict("D0 migration requires compatibility migration")
             if ledger[_D0_MIGRATION] != migration_digests[_D0_MIGRATION]:
                 raise RegistryConflict("D0 migration checksum changed after apply")
+        if d_applied:
+            if not d0_applied:
+                raise RegistryConflict("D migration requires D0 migration")
+            if ledger[_D_MIGRATION] != migration_digests[_D_MIGRATION]:
+                raise RegistryConflict("D migration checksum changed after apply")
+            expected_base_fingerprint = _EXPECTED_D_BASE_SCHEMA_FINGERPRINT
+            expected_trigger_fingerprint = _EXPECTED_D_TRIGGER_FINGERPRINT
+        elif d0_applied:
             expected_base_fingerprint = _EXPECTED_D0_BASE_SCHEMA_FINGERPRINT
             expected_trigger_fingerprint = _EXPECTED_D0_TRIGGER_FINGERPRINT
             if expected_base_fingerprint is None or expected_trigger_fingerprint is None:
@@ -1809,12 +2125,107 @@ class ExperimentRegistry:
                         evidence_artifact_id,
                     )
 
+    @staticmethod
+    def _validate_persisted_d(connection: sqlite3.Connection) -> None:
+        """Recompute every D proof without rewriting historical D0 rows.
+
+        A proof is immutable evidence of the trial count at its own recording
+        time.  A later sibling trial deliberately makes it ineligible for a
+        *new* promotion, but does not falsify or mutate the original record.
+        Likewise, legacy D0 upper stages are preserved as pre-D evidence and
+        are not retroactively fabricated into D assessments.
+        """
+        from .overfitting import OverfittingValidationError, validate_persisted_payload
+
+        for (
+            assessment_id,
+            trial_id,
+            evidence_artifact_id,
+            trial_count,
+            policy_sha256,
+            evidence_json,
+            evidence_sha256,
+            recorded_at_ns,
+            passed,
+        ) in connection.execute(
+            """
+            SELECT assessment_id, trial_id, evidence_artifact_id, trial_count,
+                   policy_sha256, canonical_evidence_json, evidence_sha256,
+                   recorded_at_ns, passed
+            FROM overfitting_assessments
+            """
+        ):
+            _require_sha256(assessment_id, "stored overfitting assessment_id")
+            _require_sha256(trial_id, "stored overfitting trial_id")
+            _require_sha256(evidence_artifact_id, "stored overfitting evidence_artifact_id")
+            _require_nonnegative_integer(trial_count, "stored overfitting trial_count")
+            if trial_count < 1:
+                raise RegistryConflict("stored overfitting trial_count is invalid")
+            _require_sha256(policy_sha256, "stored overfitting policy_sha256")
+            _require_sha256(evidence_sha256, "stored overfitting evidence_sha256")
+            _require_nonnegative_integer(recorded_at_ns, "stored overfitting recorded_at_ns")
+            if passed != 1:
+                raise RegistryConflict("stored overfitting assessment is not a passing immutable proof")
+            ExperimentRegistry._require_trial_bound_stage_evidence_locked(
+                connection,
+                trial_id,
+                evidence_artifact_id,
+            )
+            identity = connection.execute(
+                """
+                SELECT strategy_family_id, data_snapshot_artifact_id, dataset_sha256, created_at_ns
+                FROM trial_identities WHERE trial_id = ?
+                """,
+                (trial_id,),
+            ).fetchone()
+            if identity is None:
+                raise RegistryConflict("stored overfitting assessment trial identity is missing")
+            strategy_family_id, data_snapshot_artifact_id, dataset_sha256, created_at_ns = tuple(identity)
+            if recorded_at_ns < created_at_ns:
+                raise RegistryConflict("stored overfitting assessment predates its trial identity")
+            recorded_trial_count = ExperimentRegistry._trial_count_at_locked(
+                connection,
+                strategy_family_id,
+                data_snapshot_artifact_id,
+                dataset_sha256,
+                recorded_at_ns,
+            )
+            if recorded_trial_count != trial_count:
+                raise RegistryConflict("stored overfitting assessment trial count is not historically bound")
+            try:
+                payload = json.loads(evidence_json)
+                canonical = validate_persisted_payload(payload, trial_count)
+            except (TypeError, json.JSONDecodeError, OverfittingValidationError) as error:
+                raise RegistryConflict("stored overfitting assessment is not canonical passing evidence") from error
+            if canonical_bytes(canonical).decode("ascii") != evidence_json:
+                raise RegistryConflict("stored overfitting assessment is not canonical JSON")
+            if sha256_bytes(evidence_json.encode("ascii")) != evidence_sha256:
+                raise RegistryConflict("stored overfitting assessment hash does not match")
+            if canonical["policy_sha256"] != policy_sha256:
+                raise RegistryConflict("stored overfitting policy hash does not match")
+            expected_assessment_id = ExperimentRegistry._assessment_identifier(
+                trial_id,
+                evidence_artifact_id,
+                trial_count,
+                policy_sha256,
+                evidence_sha256,
+                recorded_at_ns,
+            )
+            if assessment_id != expected_assessment_id:
+                raise RegistryConflict("stored overfitting assessment identifier does not match")
+
     def _connect(self) -> sqlite3.Connection:
         self._validate_storage_paths()
         connection = sqlite3.connect(
             str(self._database_path),
             timeout=0.0,
             isolation_level=None,
+        )
+        connection.create_function(
+            "research_engine_sha256",
+            1,
+            _sqlite_canonical_sha256,
+            deterministic=True,
         )
         connection.execute("PRAGMA busy_timeout = 0")
         connection.execute("PRAGMA foreign_keys = ON")
@@ -1899,3 +2310,10 @@ def _require_nonempty(value: str, label: str) -> None:
 def _require_nonnegative_integer(value: object, label: str) -> None:
     if type(value) is not int or value < 0:
         raise RegistryConflict(f"{label} must be a non-negative integer")
+
+
+def _sqlite_canonical_sha256(value: object) -> str:
+    """Expose only the registry's deterministic SHA-256 primitive to SQLite triggers."""
+    if not isinstance(value, str):
+        raise ValueError("SQLite canonical hash input must be text")
+    return sha256_bytes(value.encode("utf-8"))
