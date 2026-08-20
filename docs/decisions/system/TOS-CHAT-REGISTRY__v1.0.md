@@ -1,7 +1,7 @@
 ---
 id: TOS-CHAT-REGISTRY
-version: 1.5
-updated_at: 2026-08-04T00:00:00Z
+version: 1.6
+updated_at: 2026-08-20T00:00:00Z
 ---
 
 # Trading OS Sohbet Kimlik Defteri
@@ -73,7 +73,7 @@ Yeni sohbet için anahtar ekleme biçimi:
 <yuzey>-<islev>-<istege-bagli-konu>
 ```
 
-Örnek: `codex-dev-risk`, `cloud-planner-polymarket`.
+Örnek: `codex-dev-risk`, `cloud-planner-adapter`.
 
 ## Rol ve ajan örneği ayrımı
 

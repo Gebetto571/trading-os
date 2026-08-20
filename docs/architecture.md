@@ -28,6 +28,24 @@ GitHub ise sürümlü uzak yedeği ve sohbetler arası devir bağlantısını tu
 Hiçbir sohbet veya yerel araç GitHub'ı ya da proje kaynağını periyodik olarak
 taramaz.
 
+## Ürün ve strateji kapıları
+
+- İlk aktif ürün ve adaptör Binance Global BTCUSDT spot'tur. Adaptör public market
+  data, private order/user stream, LIMIT GTC submit/cancel/query, balances, fills,
+  reconnect/backfill ve rate-limit/error mapping ile sınırlıdır; strateji veya risk
+  kuralı içermez.
+- İlk strateji yönü price-action araştırmasıdır. Akış `hipotez → veri kalite testi
+  → causal event study → walk-forward → holdout → replay → PAPER → LIVE_CANARY →
+  sınırlı LIVE` sırasını izler. Kanıtlanmış strateji ve kabul kartı olmadan PAPER,
+  LIVE_CANARY veya LIVE açılmaz; LIVE ayrıca açık insan onayı ve sermaye limiti ister.
+- Sınırlar `Strategy → TradeIntent → Economic Gate → Risk Authority → Execution →
+  Reconciler` olarak ayrıdır. Adaptör ürün bağlantısını, Strategy araştırmayı,
+  Risk Authority sermaye/risk kararını, Execution emir yaşam döngüsünü ve Reconciler
+  dış gerçek ile iç durumu eşleştirmeyi taşır.
+- XAU/USD ikincil ve ayrı adaptör/ürün kararıyla; BTCUSDT isolated margin ise spot
+  production kanıtı ve ayrı margin kararıyla ele alınabilir. Perpetual, futures,
+  cross margin ve BIST/hisse aktif ilk yol haritasında değildir.
+
 ## Gelecek yazılım yerleşimi
 
 Ana Trading OS uygulaması büyürken aşağıdaki sınırlar korunacaktır:

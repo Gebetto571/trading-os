@@ -76,6 +76,21 @@ bağımsız düzenlenen iki yaşayan kopya oluşturulmaz; TOS-DEC-004 bölüm 7 
 Yeni Markdown varsayılan olarak açılmaz; TOS-DEC-004 istisnası ve merkezi fihrist
 kaydı birlikte gerekir.
 
+## Ürün ve strateji kapsamı
+
+İlk aktif ürün ve adaptör Binance Global BTCUSDT spot'tur. Adaptör public market
+data, private order/user stream, LIMIT GTC submit/cancel/query, balances, fills,
+reconnect/backfill ve rate-limit/error mapping sınırında kalır; strateji veya risk
+kuralı yazmaz. İlk strateji yönü price-action araştırmasıdır. Kanıtlanmış strateji
+ve ayrı kabul kartı yoksa PAPER, LIVE_CANARY ve LIVE kapalıdır; güvenli başlangıç
+BACKTEST/REPLAY'dir.
+
+XAU/USD, BTCUSDT spot veri, replay, risk, PAPER ve execution kapıları tamamlandıktan
+sonra ayrı ürün ve adaptör kararıyla ele alınabilecek ikincil kapsamdır. BTCUSDT
+isolated margin ise spot production kanıtı ve ayrı margin kararı sonrasına bırakılır.
+Perpetual, futures, cross margin ve BIST/hisse bu kartın aktif ilk yol haritasında
+değildir.
+
 ## BTCUSDT tarihsel veri katmanı
 
 Rust veri hattı `crates/market-data` altında bulunur. Binance Global spot `BTCUSDT/1m`
