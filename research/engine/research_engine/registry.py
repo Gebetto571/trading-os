@@ -31,6 +31,10 @@ _ARTIFACT_TYPES = frozenset(
     }
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 _DISPOSABLE_MARKER = ".research-engine-disposable-lineage-fixture"
 _DISPOSABLE_MARKER_CONTENT = "research-engine-disposable-lineage-fixture-v1\n"
 _REGISTRY_MIGRATION = "001_experiment_registry.sql"
@@ -38,6 +42,7 @@ _LINEAGE_MIGRATION = "002_lineage_foundation.sql"
 _COMPATIBILITY_MIGRATION = "003_lineage_compatibility_hardening.sql"
 _D0_MIGRATION = "004_trial_identity_holdout_gate.sql"
 _D_MIGRATION = "005_overfitting_safety_gate.sql"
+_H1_MIGRATION = "006_h1_raw_lineage_evidence.sql"
 _TRIAL_STAGES = (
     "EXPLORATORY",
     "CANDIDATE",
@@ -72,6 +77,10 @@ _EXPECTED_D0_TRIGGER_FINGERPRINT = "2b3ba2c20a5260e075b5bdc76adb4bbe1b8bdb540629
 # the table/index shape and all immutable/raw-SQL gate triggers.
 _EXPECTED_D_BASE_SCHEMA_FINGERPRINT = "af7dfe980f3e3939bb52188095a8205364b8585e5edc3da1fa9c28ab4b602488"
 _EXPECTED_D_TRIGGER_FINGERPRINT = "d5a288dd39057136acfbc9a534a0a1fdd08e1a638b784bc34e977113ad15bf14"
+# Bound after the additive H1 migration is finalized. These remain separate
+# from the D fingerprints so an immutable 005-only database stays recognized.
+_EXPECTED_H1_BASE_SCHEMA_FINGERPRINT = "4ea0033714527dae95cac7ce516da6783ee170466d1e0c26aecf83d8c7a620f2"
+_EXPECTED_H1_TRIGGER_FINGERPRINT = "30dfea68ade071ed3d5b6c35a8be5f766b1d291fc5d34d74ac5e61e1d6a286d6"
 
 _COMPATIBILITY_HARDENING_TRIGGERS = (
     "relations_require_adjacent_chain",
@@ -223,6 +232,28 @@ class OverfittingAssessmentResult:
     reused: bool
     sqlite_write_elapsed_ns: int
     sqlite_read_elapsed_ns: int
+
+
+@dataclass(frozen=True)
+class H1LineageResult:
+    """Immutable H1 producer write or exact replay outcome."""
+
+    lineage_id: str
+    opaque_evidence_sha256: str
+    artifact_ids: tuple[str, ...]
+    reused: bool
+    sqlite_write_elapsed_ns: int
+    sqlite_read_elapsed_ns: int
+
+
+@dataclass(frozen=True)
+class H1LineageReadback:
+    """Byte-preserving, queryable H1 lineage evidence."""
+
+    lineage_id: str
+    opaque_evidence_sha256: str
+    opaque_bytes: bytes
+    artifact_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -477,6 +508,218 @@ class ExperimentRegistry:
         except sqlite3.OperationalError as error:
             self._rollback(connection)
             raise RegistryBusy("registry writer is already held by another process") from error
+        finally:
+            connection.close()
+
+    @staticmethod
+    def decode_h1_opaque_evidence(
+        encoded: str,
+        expected_sha256: str,
+    ) -> bytes:
+        """Strictly decode task-local C3 bytes without interpreting their document."""
+        _require_sha256(expected_sha256, "opaque evidence expected_sha256")
+        if not isinstance(encoded, str) or not encoded:
+            raise RegistryConflict("opaque evidence base64 must be a non-empty string")
+        try:
+            raw = _strict_rfc4648_base64_decode(encoded)
+        except ValueError as error:
+            raise RegistryConflict("opaque evidence is not strict RFC4648 base64") from error
+        if not raw:
+            raise RegistryConflict("opaque evidence must not be empty")
+        if sha256_bytes(raw) != expected_sha256:
+            raise RegistryConflict("opaque evidence SHA-256 does not match")
+        return raw
+
+    def record_h1_lineage(
+        self,
+        *,
+        opaque_c3_bytes: bytes,
+        opaque_c3_sha256: str,
+        c3_task_uuid: str,
+        c3_result_uuid: str,
+        c3_result_raw_sha256: str,
+        c3_exporter_commit: str,
+        c2_canonical_wire_sha256: str,
+        c2_materialization_id: str,
+        c0_data_snapshot_id: str,
+        c0_experiment_run_id: str,
+        c0_candidate_id: str,
+        c0_package_id: str,
+        c0_trace_id: str,
+        c0_strategy_family_id: str,
+        c0_code_sha256: str,
+        c0_config_sha256: str,
+        recorded_at_ns: int,
+    ) -> H1LineageResult:
+        """Atomically materialize one real, opaque-source H1 lineage chain.
+
+        The C3 bytes are intentionally never decoded as JSON or regenerated.
+        Their sole use here is byte-level hashing and durable BLOB persistence.
+        """
+        self._validate_h1_input(
+            opaque_c3_bytes=opaque_c3_bytes,
+            opaque_c3_sha256=opaque_c3_sha256,
+            c3_task_uuid=c3_task_uuid,
+            c3_result_uuid=c3_result_uuid,
+            c3_result_raw_sha256=c3_result_raw_sha256,
+            c3_exporter_commit=c3_exporter_commit,
+            c2_canonical_wire_sha256=c2_canonical_wire_sha256,
+            c2_materialization_id=c2_materialization_id,
+            c0_data_snapshot_id=c0_data_snapshot_id,
+            c0_experiment_run_id=c0_experiment_run_id,
+            c0_candidate_id=c0_candidate_id,
+            c0_package_id=c0_package_id,
+            c0_trace_id=c0_trace_id,
+            c0_strategy_family_id=c0_strategy_family_id,
+            c0_code_sha256=c0_code_sha256,
+            c0_config_sha256=c0_config_sha256,
+            recorded_at_ns=recorded_at_ns,
+        )
+        lineage_id = self._h1_lineage_identifier(
+            opaque_c3_sha256=opaque_c3_sha256,
+            c0_data_snapshot_id=c0_data_snapshot_id,
+            c0_experiment_run_id=c0_experiment_run_id,
+            c0_candidate_id=c0_candidate_id,
+            c0_package_id=c0_package_id,
+            c0_trace_id=c0_trace_id,
+            c0_strategy_family_id=c0_strategy_family_id,
+            c0_code_sha256=c0_code_sha256,
+            c0_config_sha256=c0_config_sha256,
+            c2_materialization_id=c2_materialization_id,
+        )
+        artifacts = self._h1_lineage_artifacts(
+            lineage_id=lineage_id,
+            opaque_c3_sha256=opaque_c3_sha256,
+            c3_task_uuid=c3_task_uuid,
+            c3_result_uuid=c3_result_uuid,
+            c3_result_raw_sha256=c3_result_raw_sha256,
+            c3_exporter_commit=c3_exporter_commit,
+            c2_canonical_wire_sha256=c2_canonical_wire_sha256,
+            c2_materialization_id=c2_materialization_id,
+            c0_data_snapshot_id=c0_data_snapshot_id,
+            c0_experiment_run_id=c0_experiment_run_id,
+            c0_candidate_id=c0_candidate_id,
+            c0_package_id=c0_package_id,
+            c0_trace_id=c0_trace_id,
+            c0_strategy_family_id=c0_strategy_family_id,
+            c0_code_sha256=c0_code_sha256,
+            c0_config_sha256=c0_config_sha256,
+        )
+        started = time.perf_counter_ns()
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            self._preflight_migration_state(connection, self._migration_digests())
+            self._require_h1_migration_locked(connection)
+            self._validate_persisted_h1(connection)
+            changed = self._ensure_h1_raw_evidence_locked(
+                connection,
+                opaque_c3_bytes=opaque_c3_bytes,
+                opaque_c3_sha256=opaque_c3_sha256,
+                c3_task_uuid=c3_task_uuid,
+                c3_result_uuid=c3_result_uuid,
+                c3_result_raw_sha256=c3_result_raw_sha256,
+                c3_exporter_commit=c3_exporter_commit,
+                c2_canonical_wire_sha256=c2_canonical_wire_sha256,
+                c2_materialization_id=c2_materialization_id,
+                recorded_at_ns=recorded_at_ns,
+            )
+            for artifact in artifacts:
+                ensured = self._ensure_artifact_locked(connection, artifact, recorded_at_ns)
+                changed = ensured.changed or changed
+            artifact_ids = tuple(item.artifact_id for item in artifacts)
+            for parent_id, child_id in zip(artifact_ids, artifact_ids[1:]):
+                changed = (
+                    self._ensure_relation_locked(connection, parent_id, child_id, recorded_at_ns)
+                    or changed
+                )
+            changed = (
+                self._ensure_h1_materialization_locked(
+                    connection,
+                    lineage_id=lineage_id,
+                    opaque_c3_sha256=opaque_c3_sha256,
+                    artifact_ids=artifact_ids,
+                    c0_data_snapshot_id=c0_data_snapshot_id,
+                    c0_experiment_run_id=c0_experiment_run_id,
+                    c0_candidate_id=c0_candidate_id,
+                    c0_package_id=c0_package_id,
+                    c0_trace_id=c0_trace_id,
+                    c0_strategy_family_id=c0_strategy_family_id,
+                    c0_code_sha256=c0_code_sha256,
+                    c0_config_sha256=c0_config_sha256,
+                    recorded_at_ns=recorded_at_ns,
+                )
+                or changed
+            )
+            self._validate_persisted_h1(connection)
+            connection.execute("COMMIT")
+            elapsed = max(1, time.perf_counter_ns() - started)
+            return H1LineageResult(
+                lineage_id=lineage_id,
+                opaque_evidence_sha256=opaque_c3_sha256,
+                artifact_ids=artifact_ids,
+                reused=not changed,
+                sqlite_write_elapsed_ns=elapsed if changed else 0,
+                sqlite_read_elapsed_ns=0 if changed else elapsed,
+            )
+        except RegistryConflict:
+            self._rollback(connection)
+            raise
+        except sqlite3.IntegrityError as error:
+            self._rollback(connection)
+            raise RegistryConflict("H1 immutable lineage integrity rejected") from error
+        except sqlite3.OperationalError as error:
+            self._rollback(connection)
+            raise RegistryBusy("H1 lineage writer is already held by another process") from error
+        finally:
+            connection.close()
+
+    def read_h1_lineage(self, lineage_id: str) -> H1LineageReadback:
+        """Read an exact H1 materialization only after fail-closed verification."""
+        _require_sha256(lineage_id, "H1 lineage_id")
+        connection = self._connect()
+        try:
+            self._preflight_migration_state(connection, self._migration_digests())
+            self._require_h1_migration_locked(connection)
+            self._validate_persisted_h1(connection)
+            row = connection.execute(
+                """
+                SELECT materialization.opaque_evidence_sha256, evidence.raw_bytes,
+                       materialization.data_snapshot_artifact_id,
+                       materialization.experiment_run_artifact_id,
+                       materialization.strategy_candidate_artifact_id,
+                       materialization.strategy_package_artifact_id,
+                       materialization.replay_artifact_id,
+                       materialization.paper_artifact_id,
+                       materialization.decision_artifact_id
+                FROM h1_lineage_materializations AS materialization
+                JOIN h1_raw_lineage_evidence AS evidence
+                  ON evidence.opaque_evidence_sha256 = materialization.opaque_evidence_sha256
+                WHERE materialization.lineage_id = ?
+                """,
+                (lineage_id,),
+            ).fetchone()
+            if row is None:
+                raise RegistryConflict("H1 lineage materialization is missing")
+            opaque_evidence_sha256, opaque_bytes, *artifact_ids = tuple(row)
+            if type(opaque_bytes) is not bytes:
+                raise RegistryConflict("stored H1 opaque evidence is not a BLOB")
+            return H1LineageReadback(
+                lineage_id=lineage_id,
+                opaque_evidence_sha256=opaque_evidence_sha256,
+                opaque_bytes=opaque_bytes,
+                artifact_ids=tuple(artifact_ids),
+            )
+        finally:
+            connection.close()
+
+    def verify_h1_lineage(self) -> None:
+        """Verify all H1 BLOB/provenance/chain bindings without mutating them."""
+        connection = self._connect()
+        try:
+            self._preflight_migration_state(connection, self._migration_digests())
+            self._require_h1_migration_locked(connection)
+            self._validate_persisted_h1(connection)
         finally:
             connection.close()
 
@@ -1386,6 +1629,553 @@ class ExperimentRegistry:
         return True
 
     @staticmethod
+    def _validate_h1_input(
+        *,
+        opaque_c3_bytes: bytes,
+        opaque_c3_sha256: str,
+        c3_task_uuid: str,
+        c3_result_uuid: str,
+        c3_result_raw_sha256: str,
+        c3_exporter_commit: str,
+        c2_canonical_wire_sha256: str,
+        c2_materialization_id: str,
+        c0_data_snapshot_id: str,
+        c0_experiment_run_id: str,
+        c0_candidate_id: str,
+        c0_package_id: str,
+        c0_trace_id: str,
+        c0_strategy_family_id: str,
+        c0_code_sha256: str,
+        c0_config_sha256: str,
+        recorded_at_ns: int,
+    ) -> None:
+        if type(opaque_c3_bytes) is not bytes or not opaque_c3_bytes:
+            raise RegistryConflict("opaque C3 evidence must be non-empty bytes")
+        _require_sha256(opaque_c3_sha256, "opaque C3 evidence SHA-256")
+        if sha256_bytes(opaque_c3_bytes) != opaque_c3_sha256:
+            raise RegistryConflict("opaque C3 evidence SHA-256 does not match")
+        _require_uuid(c3_task_uuid, "C3 task UUID")
+        _require_uuid(c3_result_uuid, "C3 result UUID")
+        _require_sha256(c3_result_raw_sha256, "C3 result raw SHA-256")
+        _require_git_commit(c3_exporter_commit, "C3 exporter commit")
+        _require_sha256(c2_canonical_wire_sha256, "C2 canonical wire SHA-256")
+        _require_sha256(c2_materialization_id, "C2 materialization ID")
+        _require_sha256(c0_data_snapshot_id, "C0 data snapshot ID")
+        _require_sha256(c0_experiment_run_id, "C0 experiment run ID")
+        _require_sha256(c0_candidate_id, "C0 candidate ID")
+        _require_sha256(c0_package_id, "C0 package ID")
+        _require_sha256(c0_trace_id, "C0 trace ID")
+        _require_nonempty(c0_strategy_family_id, "C0 strategy family ID")
+        _require_sha256(c0_code_sha256, "C0 code SHA-256")
+        _require_sha256(c0_config_sha256, "C0 config SHA-256")
+        _require_nonnegative_integer(recorded_at_ns, "H1 recorded_at_ns")
+
+    @staticmethod
+    def _h1_lineage_identifier(
+        *,
+        opaque_c3_sha256: str,
+        c0_data_snapshot_id: str,
+        c0_experiment_run_id: str,
+        c0_candidate_id: str,
+        c0_package_id: str,
+        c0_trace_id: str,
+        c0_strategy_family_id: str,
+        c0_code_sha256: str,
+        c0_config_sha256: str,
+        c2_materialization_id: str,
+    ) -> str:
+        return sha256_bytes(
+            canonical_bytes(
+                {
+                    "c0_candidate_id": c0_candidate_id,
+                    "c0_code_sha256": c0_code_sha256,
+                    "c0_config_sha256": c0_config_sha256,
+                    "c0_data_snapshot_id": c0_data_snapshot_id,
+                    "c0_experiment_run_id": c0_experiment_run_id,
+                    "c0_package_id": c0_package_id,
+                    "c0_strategy_family_id": c0_strategy_family_id,
+                    "c0_trace_id": c0_trace_id,
+                    "c2_materialization_id": c2_materialization_id,
+                    "opaque_c3_sha256": opaque_c3_sha256,
+                }
+            )
+        )
+
+    @staticmethod
+    def _h1_lineage_artifact(
+        artifact_type: str,
+        identity_sha256: str,
+        payload: dict[str, Any],
+    ) -> LineageArtifact:
+        return LineageArtifact(
+            artifact_type=artifact_type,
+            identity_sha256=identity_sha256,
+            content_sha256=sha256_bytes(canonical_bytes(payload)),
+            payload=payload,
+        )
+
+    @classmethod
+    def _h1_lineage_artifacts(
+        cls,
+        *,
+        lineage_id: str,
+        opaque_c3_sha256: str,
+        c3_task_uuid: str,
+        c3_result_uuid: str,
+        c3_result_raw_sha256: str,
+        c3_exporter_commit: str,
+        c2_canonical_wire_sha256: str,
+        c2_materialization_id: str,
+        c0_data_snapshot_id: str,
+        c0_experiment_run_id: str,
+        c0_candidate_id: str,
+        c0_package_id: str,
+        c0_trace_id: str,
+        c0_strategy_family_id: str,
+        c0_code_sha256: str,
+        c0_config_sha256: str,
+    ) -> tuple[LineageArtifact, ...]:
+        snapshot = cls._h1_lineage_artifact(
+            "DataSnapshot",
+            c0_data_snapshot_id,
+            {
+                "external_source_id": c0_data_snapshot_id,
+                "external_source_kind": "C0_DATA_SNAPSHOT",
+                "h1_lineage_id": lineage_id,
+                "source_c2_materialization_id": c2_materialization_id,
+            },
+        )
+        experiment_run = cls._h1_lineage_artifact(
+            "ExperimentRun",
+            c0_experiment_run_id,
+            {
+                "external_source_id": c0_experiment_run_id,
+                "external_source_kind": "C0_EXPERIMENT_RUN",
+                "h1_lineage_id": lineage_id,
+                "source_c0_code_sha256": c0_code_sha256,
+                "source_c0_config_sha256": c0_config_sha256,
+                "source_c2_canonical_wire_sha256": c2_canonical_wire_sha256,
+            },
+        )
+        candidate = cls._h1_lineage_artifact(
+            "StrategyCandidate",
+            c0_candidate_id,
+            {
+                "external_source_id": c0_candidate_id,
+                "external_source_kind": "C0_STRATEGY_CANDIDATE",
+                "h1_lineage_id": lineage_id,
+                "source_c0_trace_id": c0_trace_id,
+                "strategy_family_id": c0_strategy_family_id,
+            },
+        )
+        package = cls._h1_lineage_artifact(
+            "StrategyPackage",
+            c0_package_id,
+            {
+                "external_source_id": c0_package_id,
+                "external_source_kind": "C0_STRATEGY_PACKAGE",
+                "h1_lineage_id": lineage_id,
+                "strategy_family_id": c0_strategy_family_id,
+            },
+        )
+        replay = cls._h1_lineage_artifact(
+            "Replay",
+            sha256_bytes(
+                canonical_bytes(
+                    {
+                        "c0_trace_id": c0_trace_id,
+                        "opaque_c3_sha256": opaque_c3_sha256,
+                    }
+                )
+            ),
+            {
+                "c3_exporter_commit": c3_exporter_commit,
+                "c3_result_raw_sha256": c3_result_raw_sha256,
+                "c3_result_uuid": c3_result_uuid,
+                "c3_task_uuid": c3_task_uuid,
+                "h1_lineage_id": lineage_id,
+                "opaque_c3_sha256": opaque_c3_sha256,
+                "source_c0_trace_id": c0_trace_id,
+            },
+        )
+        paper = cls._h1_lineage_artifact(
+            "Paper",
+            sha256_bytes(
+                canonical_bytes(
+                    {
+                        "opaque_c3_sha256": opaque_c3_sha256,
+                        "replay_artifact_id": replay.artifact_id,
+                    }
+                )
+            ),
+            {
+                "boundary": "SIMULATION_ARTIFACT_ONLY",
+                "h1_lineage_id": lineage_id,
+                "opaque_c3_sha256": opaque_c3_sha256,
+                "replay_artifact_id": replay.artifact_id,
+            },
+        )
+        decision = cls._h1_lineage_artifact(
+            "Decision",
+            sha256_bytes(
+                canonical_bytes(
+                    {
+                        "paper_artifact_id": paper.artifact_id,
+                        "opaque_c3_sha256": opaque_c3_sha256,
+                    }
+                )
+            ),
+            {
+                "decision_kind": "LINEAGE_RETAINED_NOT_PROMOTION",
+                "h1_lineage_id": lineage_id,
+                "opaque_c3_sha256": opaque_c3_sha256,
+                "paper_artifact_id": paper.artifact_id,
+            },
+        )
+        return (snapshot, experiment_run, candidate, package, replay, paper, decision)
+
+    @staticmethod
+    def _require_h1_migration_locked(connection: sqlite3.Connection) -> None:
+        if connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE migration_name = ?",
+            (_H1_MIGRATION,),
+        ).fetchone() is None:
+            raise RegistryConflict("H1 raw-lineage migration is not applied")
+
+    @staticmethod
+    def _ensure_h1_raw_evidence_locked(
+        connection: sqlite3.Connection,
+        *,
+        opaque_c3_bytes: bytes,
+        opaque_c3_sha256: str,
+        c3_task_uuid: str,
+        c3_result_uuid: str,
+        c3_result_raw_sha256: str,
+        c3_exporter_commit: str,
+        c2_canonical_wire_sha256: str,
+        c2_materialization_id: str,
+        recorded_at_ns: int,
+    ) -> bool:
+        existing_by_hash = connection.execute(
+            """
+            SELECT raw_bytes, c3_task_uuid, c3_result_uuid, c3_result_raw_sha256,
+                   c3_exporter_commit, c2_canonical_wire_sha256, c2_materialization_id
+            FROM h1_raw_lineage_evidence WHERE opaque_evidence_sha256 = ?
+            """,
+            (opaque_c3_sha256,),
+        ).fetchone()
+        expected_by_hash = (
+            opaque_c3_bytes,
+            c3_task_uuid,
+            c3_result_uuid,
+            c3_result_raw_sha256,
+            c3_exporter_commit,
+            c2_canonical_wire_sha256,
+            c2_materialization_id,
+        )
+        if existing_by_hash is not None:
+            if tuple(existing_by_hash) != expected_by_hash:
+                raise RegistryConflict("opaque C3 evidence maps to different immutable provenance")
+            return False
+        existing_by_result = connection.execute(
+            """
+            SELECT opaque_evidence_sha256, raw_bytes, c3_task_uuid, c3_result_raw_sha256,
+                   c3_exporter_commit, c2_canonical_wire_sha256, c2_materialization_id
+            FROM h1_raw_lineage_evidence WHERE c3_result_uuid = ?
+            """,
+            (c3_result_uuid,),
+        ).fetchone()
+        expected_by_result = (
+            opaque_c3_sha256,
+            opaque_c3_bytes,
+            c3_task_uuid,
+            c3_result_raw_sha256,
+            c3_exporter_commit,
+            c2_canonical_wire_sha256,
+            c2_materialization_id,
+        )
+        if existing_by_result is not None:
+            if tuple(existing_by_result) != expected_by_result:
+                raise RegistryConflict("C3 result identity maps to different immutable opaque evidence")
+            return False
+        connection.execute(
+            """
+            INSERT INTO h1_raw_lineage_evidence (
+                opaque_evidence_sha256, raw_bytes, c3_task_uuid, c3_result_uuid,
+                c3_result_raw_sha256, c3_exporter_commit, c2_canonical_wire_sha256,
+                c2_materialization_id, created_at_ns
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                opaque_c3_sha256,
+                opaque_c3_bytes,
+                c3_task_uuid,
+                c3_result_uuid,
+                c3_result_raw_sha256,
+                c3_exporter_commit,
+                c2_canonical_wire_sha256,
+                c2_materialization_id,
+                recorded_at_ns,
+            ),
+        )
+        return True
+
+    @staticmethod
+    def _ensure_h1_materialization_locked(
+        connection: sqlite3.Connection,
+        *,
+        lineage_id: str,
+        opaque_c3_sha256: str,
+        artifact_ids: tuple[str, ...],
+        c0_data_snapshot_id: str,
+        c0_experiment_run_id: str,
+        c0_candidate_id: str,
+        c0_package_id: str,
+        c0_trace_id: str,
+        c0_strategy_family_id: str,
+        c0_code_sha256: str,
+        c0_config_sha256: str,
+        recorded_at_ns: int,
+    ) -> bool:
+        if len(artifact_ids) != 7:
+            raise RegistryConflict("H1 materialization requires exactly seven artifacts")
+        existing = connection.execute(
+            """
+            SELECT opaque_evidence_sha256, data_snapshot_artifact_id,
+                   experiment_run_artifact_id, strategy_candidate_artifact_id,
+                   strategy_package_artifact_id, replay_artifact_id,
+                   paper_artifact_id, decision_artifact_id, c0_data_snapshot_id,
+                   c0_experiment_run_id, c0_candidate_id, c0_package_id,
+                   c0_trace_id, c0_strategy_family_id, c0_code_sha256,
+                   c0_config_sha256
+            FROM h1_lineage_materializations WHERE lineage_id = ?
+            """,
+            (lineage_id,),
+        ).fetchone()
+        expected = (
+            opaque_c3_sha256,
+            *artifact_ids,
+            c0_data_snapshot_id,
+            c0_experiment_run_id,
+            c0_candidate_id,
+            c0_package_id,
+            c0_trace_id,
+            c0_strategy_family_id,
+            c0_code_sha256,
+            c0_config_sha256,
+        )
+        if existing is not None:
+            if tuple(existing) != expected:
+                raise RegistryConflict("H1 lineage identifier maps to different immutable evidence")
+            return False
+        existing_raw = connection.execute(
+            "SELECT lineage_id FROM h1_lineage_materializations WHERE opaque_evidence_sha256 = ?",
+            (opaque_c3_sha256,),
+        ).fetchone()
+        if existing_raw is not None:
+            raise RegistryConflict("opaque C3 evidence already maps to another H1 lineage")
+        connection.execute(
+            """
+            INSERT INTO h1_lineage_materializations (
+                lineage_id, opaque_evidence_sha256, data_snapshot_artifact_id,
+                experiment_run_artifact_id, strategy_candidate_artifact_id,
+                strategy_package_artifact_id, replay_artifact_id, paper_artifact_id,
+                decision_artifact_id, c0_data_snapshot_id, c0_experiment_run_id,
+                c0_candidate_id, c0_package_id, c0_trace_id, c0_strategy_family_id,
+                c0_code_sha256, c0_config_sha256, created_at_ns
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                lineage_id,
+                opaque_c3_sha256,
+                *artifact_ids,
+                c0_data_snapshot_id,
+                c0_experiment_run_id,
+                c0_candidate_id,
+                c0_package_id,
+                c0_trace_id,
+                c0_strategy_family_id,
+                c0_code_sha256,
+                c0_config_sha256,
+                recorded_at_ns,
+            ),
+        )
+        return True
+
+    @classmethod
+    def _validate_persisted_h1(cls, connection: sqlite3.Connection) -> None:
+        """Fail closed on any opaque BLOB or seven-step materialization drift."""
+        cls._validate_persisted_lineage(connection)
+        evidence_rows: dict[str, tuple[object, ...]] = {}
+        evidence_by_result_uuid: dict[str, str] = {}
+        for raw_row in connection.execute(
+            """
+            SELECT opaque_evidence_sha256, raw_bytes, c3_task_uuid, c3_result_uuid,
+                   c3_result_raw_sha256, c3_exporter_commit,
+                   c2_canonical_wire_sha256, c2_materialization_id, created_at_ns
+            FROM h1_raw_lineage_evidence
+            """
+        ):
+            row = tuple(raw_row)
+            opaque_evidence_sha256 = row[0]
+            c3_result_uuid = row[3]
+            if not isinstance(opaque_evidence_sha256, str) or not isinstance(c3_result_uuid, str):
+                raise RegistryConflict("stored H1 evidence identifiers are not text")
+            if opaque_evidence_sha256 in evidence_rows:
+                raise RegistryConflict("stored H1 opaque evidence identifier is duplicated")
+            if c3_result_uuid in evidence_by_result_uuid:
+                raise RegistryConflict("stored H1 C3 result identity is duplicated")
+            evidence_rows[opaque_evidence_sha256] = row
+            evidence_by_result_uuid[c3_result_uuid] = opaque_evidence_sha256
+        materializations = tuple(
+            connection.execute(
+                """
+                SELECT lineage_id, opaque_evidence_sha256, data_snapshot_artifact_id,
+                       experiment_run_artifact_id, strategy_candidate_artifact_id,
+                       strategy_package_artifact_id, replay_artifact_id,
+                       paper_artifact_id, decision_artifact_id, c0_data_snapshot_id,
+                       c0_experiment_run_id, c0_candidate_id, c0_package_id,
+                       c0_trace_id, c0_strategy_family_id, c0_code_sha256,
+                       c0_config_sha256, created_at_ns
+                FROM h1_lineage_materializations
+                """
+            )
+        )
+        materialized_evidence = {row[1] for row in materializations}
+        if set(evidence_rows) != materialized_evidence:
+            raise RegistryConflict("H1 opaque evidence must have exactly one materialization")
+
+        for row in materializations:
+            (
+                lineage_id,
+                opaque_c3_sha256,
+                data_snapshot_artifact_id,
+                experiment_run_artifact_id,
+                strategy_candidate_artifact_id,
+                strategy_package_artifact_id,
+                replay_artifact_id,
+                paper_artifact_id,
+                decision_artifact_id,
+                c0_data_snapshot_id,
+                c0_experiment_run_id,
+                c0_candidate_id,
+                c0_package_id,
+                c0_trace_id,
+                c0_strategy_family_id,
+                c0_code_sha256,
+                c0_config_sha256,
+                recorded_at_ns,
+            ) = tuple(row)
+            evidence = evidence_rows.get(opaque_c3_sha256)
+            if evidence is None:
+                raise RegistryConflict("H1 materialization references missing opaque evidence")
+            (
+                _,
+                opaque_c3_bytes,
+                c3_task_uuid,
+                c3_result_uuid,
+                c3_result_raw_sha256,
+                c3_exporter_commit,
+                c2_canonical_wire_sha256,
+                c2_materialization_id,
+                evidence_recorded_at_ns,
+            ) = tuple(evidence)
+            cls._validate_h1_input(
+                opaque_c3_bytes=opaque_c3_bytes,
+                opaque_c3_sha256=opaque_c3_sha256,
+                c3_task_uuid=c3_task_uuid,
+                c3_result_uuid=c3_result_uuid,
+                c3_result_raw_sha256=c3_result_raw_sha256,
+                c3_exporter_commit=c3_exporter_commit,
+                c2_canonical_wire_sha256=c2_canonical_wire_sha256,
+                c2_materialization_id=c2_materialization_id,
+                c0_data_snapshot_id=c0_data_snapshot_id,
+                c0_experiment_run_id=c0_experiment_run_id,
+                c0_candidate_id=c0_candidate_id,
+                c0_package_id=c0_package_id,
+                c0_trace_id=c0_trace_id,
+                c0_strategy_family_id=c0_strategy_family_id,
+                c0_code_sha256=c0_code_sha256,
+                c0_config_sha256=c0_config_sha256,
+                recorded_at_ns=recorded_at_ns,
+            )
+            _require_nonnegative_integer(evidence_recorded_at_ns, "stored H1 evidence created_at_ns")
+            expected_lineage_id = cls._h1_lineage_identifier(
+                opaque_c3_sha256=opaque_c3_sha256,
+                c0_data_snapshot_id=c0_data_snapshot_id,
+                c0_experiment_run_id=c0_experiment_run_id,
+                c0_candidate_id=c0_candidate_id,
+                c0_package_id=c0_package_id,
+                c0_trace_id=c0_trace_id,
+                c0_strategy_family_id=c0_strategy_family_id,
+                c0_code_sha256=c0_code_sha256,
+                c0_config_sha256=c0_config_sha256,
+                c2_materialization_id=c2_materialization_id,
+            )
+            if lineage_id != expected_lineage_id:
+                raise RegistryConflict("stored H1 lineage identifier does not match immutable inputs")
+            expected_artifacts = cls._h1_lineage_artifacts(
+                lineage_id=lineage_id,
+                opaque_c3_sha256=opaque_c3_sha256,
+                c3_task_uuid=c3_task_uuid,
+                c3_result_uuid=c3_result_uuid,
+                c3_result_raw_sha256=c3_result_raw_sha256,
+                c3_exporter_commit=c3_exporter_commit,
+                c2_canonical_wire_sha256=c2_canonical_wire_sha256,
+                c2_materialization_id=c2_materialization_id,
+                c0_data_snapshot_id=c0_data_snapshot_id,
+                c0_experiment_run_id=c0_experiment_run_id,
+                c0_candidate_id=c0_candidate_id,
+                c0_package_id=c0_package_id,
+                c0_trace_id=c0_trace_id,
+                c0_strategy_family_id=c0_strategy_family_id,
+                c0_code_sha256=c0_code_sha256,
+                c0_config_sha256=c0_config_sha256,
+            )
+            artifact_ids = (
+                data_snapshot_artifact_id,
+                experiment_run_artifact_id,
+                strategy_candidate_artifact_id,
+                strategy_package_artifact_id,
+                replay_artifact_id,
+                paper_artifact_id,
+                decision_artifact_id,
+            )
+            if tuple(item.artifact_id for item in expected_artifacts) != artifact_ids:
+                raise RegistryConflict("stored H1 artifact mapping does not match immutable inputs")
+            for artifact in expected_artifacts:
+                stored = connection.execute(
+                    """
+                    SELECT artifact_type, identity_sha256, content_sha256, canonical_payload_json
+                    FROM artifacts WHERE artifact_id = ?
+                    """,
+                    (artifact.artifact_id,),
+                ).fetchone()
+                if stored is None or tuple(stored) != (
+                    artifact.artifact_type,
+                    artifact.identity_sha256,
+                    artifact.content_sha256,
+                    artifact.canonical_payload_json,
+                ):
+                    raise RegistryConflict("stored H1 artifact is not its canonical source projection")
+            placeholders = ", ".join("?" for _ in artifact_ids)
+            observed_edges = {
+                tuple(edge)
+                for edge in connection.execute(
+                    f"""
+                    SELECT parent_artifact_id, child_artifact_id
+                    FROM relations
+                    WHERE parent_artifact_id IN ({placeholders})
+                       OR child_artifact_id IN ({placeholders})
+                    """,
+                    (*artifact_ids, *artifact_ids),
+                )
+            }
+            expected_edges = set(zip(artifact_ids, artifact_ids[1:]))
+            if observed_edges != expected_edges:
+                raise RegistryConflict("stored H1 lineage relations are not one exact adjacent chain")
+
+    @staticmethod
     def _require_matching_data_snapshot_locked(
         connection: sqlite3.Connection,
         data_snapshot_artifact_id: str,
@@ -1752,9 +2542,10 @@ class ExperimentRegistry:
             _COMPATIBILITY_MIGRATION,
             _D0_MIGRATION,
             _D_MIGRATION,
+            _H1_MIGRATION,
         }
         if not required_local.issubset(migration_digests):
-            raise RegistryConflict("required A1/H0, D0, and D migrations are missing")
+            raise RegistryConflict("required A1/H0, D0, D, and H1 migrations are missing")
         rows = tuple(
             connection.execute(
                 "SELECT migration_name, migration_sha256 FROM schema_migrations ORDER BY migration_name"
@@ -1814,6 +2605,7 @@ class ExperimentRegistry:
         compatibility_applied = _COMPATIBILITY_MIGRATION in ledger
         d0_applied = _D0_MIGRATION in ledger
         d_applied = _D_MIGRATION in ledger
+        h1_applied = _H1_MIGRATION in ledger
         if compatibility_applied:
             if ledger[_COMPATIBILITY_MIGRATION] != migration_digests[_COMPATIBILITY_MIGRATION]:
                 raise RegistryConflict("compatibility migration checksum changed after apply")
@@ -1829,6 +2621,14 @@ class ExperimentRegistry:
                 raise RegistryConflict("D migration requires D0 migration")
             if ledger[_D_MIGRATION] != migration_digests[_D_MIGRATION]:
                 raise RegistryConflict("D migration checksum changed after apply")
+        if h1_applied:
+            if not d_applied:
+                raise RegistryConflict("H1 migration requires D migration")
+            if ledger[_H1_MIGRATION] != migration_digests[_H1_MIGRATION]:
+                raise RegistryConflict("H1 migration checksum changed after apply")
+            expected_base_fingerprint = _EXPECTED_H1_BASE_SCHEMA_FINGERPRINT
+            expected_trigger_fingerprint = _EXPECTED_H1_TRIGGER_FINGERPRINT
+        elif d_applied:
             expected_base_fingerprint = _EXPECTED_D_BASE_SCHEMA_FINGERPRINT
             expected_trigger_fingerprint = _EXPECTED_D_TRIGGER_FINGERPRINT
         elif d0_applied:
@@ -1848,6 +2648,8 @@ class ExperimentRegistry:
         self._validate_persisted_lineage(connection)
         if d0_applied:
             self._validate_persisted_d0(connection)
+        if h1_applied:
+            self._validate_persisted_h1(connection)
         return lineage_digest
 
     @staticmethod
@@ -2227,6 +3029,12 @@ class ExperimentRegistry:
             _sqlite_canonical_sha256,
             deterministic=True,
         )
+        connection.create_function(
+            "research_engine_blob_sha256",
+            1,
+            _sqlite_blob_sha256,
+            deterministic=True,
+        )
         connection.execute("PRAGMA busy_timeout = 0")
         connection.execute("PRAGMA foreign_keys = ON")
         if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
@@ -2302,6 +3110,16 @@ def _require_sha256(value: str, label: str) -> None:
         raise RegistryConflict(f"{label} must be a lower-case SHA-256 value")
 
 
+def _require_git_commit(value: str, label: str) -> None:
+    if not isinstance(value, str) or not _GIT_COMMIT_RE.fullmatch(value):
+        raise RegistryConflict(f"{label} must be a lower-case full Git commit SHA")
+
+
+def _require_uuid(value: str, label: str) -> None:
+    if not isinstance(value, str) or not _UUID_RE.fullmatch(value):
+        raise RegistryConflict(f"{label} must be a lower-case UUID")
+
+
 def _require_nonempty(value: str, label: str) -> None:
     if not isinstance(value, str) or not value:
         raise RegistryConflict(f"{label} must be non-empty")
@@ -2317,3 +3135,56 @@ def _sqlite_canonical_sha256(value: object) -> str:
     if not isinstance(value, str):
         raise ValueError("SQLite canonical hash input must be text")
     return sha256_bytes(value.encode("utf-8"))
+
+
+def _sqlite_blob_sha256(value: object) -> str:
+    """Expose deterministic raw-byte SHA-256 only to the local registry connection."""
+    if isinstance(value, memoryview):
+        value = value.tobytes()
+    if type(value) is not bytes:
+        raise ValueError("SQLite BLOB hash input must be bytes")
+    return sha256_bytes(value)
+
+
+def _strict_rfc4648_base64_decode(value: str) -> bytes:
+    """Decode padded RFC 4648 Base64 without accepting whitespace or aliases."""
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    if not value.isascii() or len(value) % 4 != 0:
+        raise ValueError("Base64 requires ASCII complete quartets")
+    padding = len(value) - len(value.rstrip("="))
+    if padding > 2:
+        raise ValueError("Base64 padding is not canonical")
+    if padding and "=" in value[:-padding]:
+        raise ValueError("Base64 padding is not canonical")
+    if not padding and "=" in value:
+        raise ValueError("Base64 padding is not canonical")
+    decoded = bytearray()
+    quartet_count = len(value) // 4
+    for offset in range(0, len(value), 4):
+        quartet = value[offset : offset + 4]
+        final = offset // 4 == quartet_count - 1
+        pad = quartet.count("=")
+        if pad and (not final or quartet[-pad:] != "=" * pad):
+            raise ValueError("Base64 padding appears outside the final quartet")
+        if pad == 2 and quartet[2:] != "==":
+            raise ValueError("Base64 double padding is not canonical")
+        if pad == 1 and quartet[3] != "=":
+            raise ValueError("Base64 single padding is not canonical")
+        values: list[int] = []
+        for character in quartet[: 4 - pad]:
+            index = alphabet.find(character)
+            if index < 0:
+                raise ValueError("Base64 contains an invalid character")
+            values.append(index)
+        if len(values) < 2:
+            raise ValueError("Base64 final quartet is incomplete")
+        if pad == 2 and values[1] & 0x0F:
+            raise ValueError("Base64 double padding carries unused bits")
+        if pad == 1 and values[2] & 0x03:
+            raise ValueError("Base64 single padding carries unused bits")
+        decoded.append((values[0] << 2) | (values[1] >> 4))
+        if pad < 2:
+            decoded.append(((values[1] & 0x0F) << 4) | (values[2] >> 2))
+        if pad == 0:
+            decoded.append(((values[2] & 0x03) << 6) | values[3])
+    return bytes(decoded)

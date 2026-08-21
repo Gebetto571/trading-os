@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import sqlite3
 import sys
 import tempfile
@@ -145,6 +146,28 @@ class LineageAcceptanceTests(unittest.TestCase):
         )
         return snapshot, experiment
 
+    @staticmethod
+    def _h1_args(raw: bytes = b"\x00opaque-c3-evidence\xff") -> dict[str, object]:
+        return {
+            "opaque_c3_bytes": raw,
+            "opaque_c3_sha256": sha256_bytes(raw),
+            "c3_task_uuid": "00000000-0000-4000-8000-000000000001",
+            "c3_result_uuid": "00000000-0000-5000-8000-000000000002",
+            "c3_result_raw_sha256": digest("c3-result-envelope"),
+            "c3_exporter_commit": "a" * 40,
+            "c2_canonical_wire_sha256": digest("c2-wire"),
+            "c2_materialization_id": digest("c2-materialization"),
+            "c0_data_snapshot_id": digest("c0-data-snapshot"),
+            "c0_experiment_run_id": digest("c0-experiment-run"),
+            "c0_candidate_id": digest("c0-candidate"),
+            "c0_package_id": digest("c0-package"),
+            "c0_trace_id": digest("c0-trace"),
+            "c0_strategy_family_id": "generic-accumulator-v1",
+            "c0_code_sha256": digest("c0-code"),
+            "c0_config_sha256": digest("c0-config"),
+            "recorded_at_ns": 7,
+        }
+
     def test_contract_bundle_is_idempotent_and_invalid_edges_roll_back_atomically(self) -> None:
         snapshot = artifact("DataSnapshot", "snapshot-1", "dataset-1", "snapshot")
         experiment = artifact("ExperimentRun", "experiment-1", "result-1", "experiment")
@@ -186,6 +209,280 @@ class LineageAcceptanceTests(unittest.TestCase):
         self.assertGreater(second.sqlite_read_elapsed_ns, 0)
         self.assertEqual(self._count("artifacts"), 2)
         self.assertEqual(self._count("relations"), 1)
+
+    def test_h1_opaque_lineage_is_byte_preserving_idempotent_and_queryable(self) -> None:
+        raw = b"\x00opaque-c3-evidence\xff"
+        args = self._h1_args(raw)
+        encoded = base64.b64encode(raw).decode("ascii")
+        self.assertEqual(
+            ExperimentRegistry.decode_h1_opaque_evidence(encoded, sha256_bytes(raw)),
+            raw,
+        )
+        with self.assertRaises(RegistryConflict):
+            ExperimentRegistry.decode_h1_opaque_evidence("%not-base64%", sha256_bytes(raw))
+        with self.assertRaises(RegistryConflict):
+            ExperimentRegistry.decode_h1_opaque_evidence(encoded, digest("wrong-opaque-hash"))
+
+        first = self.registry.record_h1_lineage(**args)
+        replay = self.registry.record_h1_lineage(**args)
+        readback = self.registry.read_h1_lineage(first.lineage_id)
+        self.registry.verify_h1_lineage()
+
+        self.assertFalse(first.reused)
+        self.assertTrue(replay.reused)
+        self.assertEqual(first.lineage_id, replay.lineage_id)
+        self.assertEqual(first.artifact_ids, replay.artifact_ids)
+        self.assertEqual(readback.opaque_bytes, raw)
+        self.assertEqual(readback.opaque_evidence_sha256, sha256_bytes(raw))
+        self.assertEqual(readback.artifact_ids, first.artifact_ids)
+        self.assertEqual(len(first.artifact_ids), 7)
+        self.assertEqual(self._count("h1_raw_lineage_evidence"), 1)
+        self.assertEqual(self._count("h1_lineage_materializations"), 1)
+        self.assertEqual(self._count("artifacts"), 7)
+        self.assertEqual(self._count("relations"), 6)
+
+        connection = sqlite3.connect(self.database)
+        try:
+            stored_types = tuple(
+                row[0]
+                for row in connection.execute(
+                    """
+                    SELECT artifact.artifact_type
+                    FROM h1_lineage_materializations AS materialization
+                    JOIN artifacts AS artifact
+                      ON artifact.artifact_id IN (
+                          materialization.data_snapshot_artifact_id,
+                          materialization.experiment_run_artifact_id,
+                          materialization.strategy_candidate_artifact_id,
+                          materialization.strategy_package_artifact_id,
+                          materialization.replay_artifact_id,
+                          materialization.paper_artifact_id,
+                          materialization.decision_artifact_id
+                      )
+                    WHERE materialization.lineage_id = ?
+                    ORDER BY CASE artifact.artifact_type
+                        WHEN 'DataSnapshot' THEN 1
+                        WHEN 'ExperimentRun' THEN 2
+                        WHEN 'StrategyCandidate' THEN 3
+                        WHEN 'StrategyPackage' THEN 4
+                        WHEN 'Replay' THEN 5
+                        WHEN 'Paper' THEN 6
+                        WHEN 'Decision' THEN 7
+                    END
+                    """,
+                    (first.lineage_id,),
+                )
+            )
+        finally:
+            connection.close()
+        self.assertEqual(
+            stored_types,
+            (
+                "DataSnapshot",
+                "ExperimentRun",
+                "StrategyCandidate",
+                "StrategyPackage",
+                "Replay",
+                "Paper",
+                "Decision",
+            ),
+        )
+
+    def test_h1_rejects_hash_or_provenance_drift_without_partial_state(self) -> None:
+        args = self._h1_args()
+        with self.assertRaises(RegistryConflict):
+            self.registry.record_h1_lineage(
+                **{**args, "opaque_c3_sha256": digest("wrong-opaque-hash")}
+            )
+        self.assertEqual(self._count("h1_raw_lineage_evidence"), 0)
+        self.assertEqual(self._count("h1_lineage_materializations"), 0)
+        self.assertEqual(self._count("artifacts"), 0)
+        self.assertEqual(self._count("relations"), 0)
+
+        first = self.registry.record_h1_lineage(**args)
+        before = (
+            self._count("h1_raw_lineage_evidence"),
+            self._count("h1_lineage_materializations"),
+            self._count("artifacts"),
+            self._count("relations"),
+        )
+        with self.assertRaises(RegistryConflict):
+            self.registry.record_h1_lineage(
+                **{**args, "c3_result_raw_sha256": digest("different-c3-result")}
+            )
+        conflicting_bytes = b"\xffdifferent-opaque-c3-evidence\x00"
+        with self.assertRaises(RegistryConflict):
+            self.registry.record_h1_lineage(
+                **{
+                    **args,
+                    "opaque_c3_bytes": conflicting_bytes,
+                    "opaque_c3_sha256": sha256_bytes(conflicting_bytes),
+                }
+            )
+        self.assertEqual(
+            before,
+            (
+                self._count("h1_raw_lineage_evidence"),
+                self._count("h1_lineage_materializations"),
+                self._count("artifacts"),
+                self._count("relations"),
+            ),
+        )
+        with self.assertRaises(RegistryConflict):
+            self.registry.read_h1_lineage(digest("missing-h1-lineage"))
+        self.assertEqual(first.opaque_evidence_sha256, args["opaque_c3_sha256"])
+
+    def test_h1_raw_sql_mutation_and_replacement_are_fail_closed(self) -> None:
+        args = self._h1_args()
+        result = self.registry.record_h1_lineage(**args)
+        connection = sqlite3.connect(self.database)
+        try:
+            with self.assertRaises(sqlite3.Error):
+                connection.execute(
+                    """
+                    INSERT OR REPLACE INTO h1_raw_lineage_evidence (
+                        opaque_evidence_sha256, raw_bytes, c3_task_uuid, c3_result_uuid,
+                        c3_result_raw_sha256, c3_exporter_commit, c2_canonical_wire_sha256,
+                        c2_materialization_id, created_at_ns
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 8)
+                    """,
+                    (
+                        result.opaque_evidence_sha256,
+                        b"replacement",
+                        "00000000-0000-4000-8000-000000000001",
+                        "00000000-0000-5000-8000-000000000002",
+                        digest("c3-result-envelope"),
+                        "a" * 40,
+                        digest("c2-wire"),
+                        digest("c2-materialization"),
+                    ),
+                )
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    "UPDATE h1_raw_lineage_evidence SET raw_bytes = ?",
+                    (b"mutated",),
+                )
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute("DELETE FROM h1_raw_lineage_evidence")
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    "UPDATE h1_lineage_materializations SET c0_trace_id = ?",
+                    (digest("mutated-trace"),),
+                )
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute("DELETE FROM h1_lineage_materializations")
+        finally:
+            connection.close()
+
+        registry_connection = self.registry._connect()
+        try:
+            registry_connection.execute("BEGIN IMMEDIATE")
+            with self.assertRaises(sqlite3.IntegrityError):
+                registry_connection.execute(
+                    """
+                    INSERT INTO h1_raw_lineage_evidence (
+                        opaque_evidence_sha256, raw_bytes, c3_task_uuid, c3_result_uuid,
+                        c3_result_raw_sha256, c3_exporter_commit, c2_canonical_wire_sha256,
+                        c2_materialization_id, created_at_ns
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 9)
+                    """,
+                    (
+                        digest("incorrect-h1-raw-hash"),
+                        b"incorrect-h1-raw-bytes",
+                        args["c3_task_uuid"],
+                        args["c3_result_uuid"],
+                        args["c3_result_raw_sha256"],
+                        args["c3_exporter_commit"],
+                        args["c2_canonical_wire_sha256"],
+                        args["c2_materialization_id"],
+                    ),
+                )
+            registry_connection.execute("ROLLBACK")
+            registry_connection.execute("BEGIN IMMEDIATE")
+            invalid_raw = b"invalid-h1-chain"
+            invalid_sha = sha256_bytes(invalid_raw)
+            registry_connection.execute(
+                """
+                INSERT INTO h1_raw_lineage_evidence (
+                    opaque_evidence_sha256, raw_bytes, c3_task_uuid, c3_result_uuid,
+                    c3_result_raw_sha256, c3_exporter_commit, c2_canonical_wire_sha256,
+                    c2_materialization_id, created_at_ns
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 9)
+                """,
+                (
+                    invalid_sha,
+                    invalid_raw,
+                    args["c3_task_uuid"],
+                    "00000000-0000-5000-8000-000000000003",
+                    args["c3_result_raw_sha256"],
+                    args["c3_exporter_commit"],
+                    args["c2_canonical_wire_sha256"],
+                    args["c2_materialization_id"],
+                ),
+            )
+            with self.assertRaises(sqlite3.IntegrityError):
+                registry_connection.execute(
+                    """
+                    INSERT INTO h1_lineage_materializations (
+                        lineage_id, opaque_evidence_sha256, data_snapshot_artifact_id,
+                        experiment_run_artifact_id, strategy_candidate_artifact_id,
+                        strategy_package_artifact_id, replay_artifact_id, paper_artifact_id,
+                        decision_artifact_id, c0_data_snapshot_id, c0_experiment_run_id,
+                        c0_candidate_id, c0_package_id, c0_trace_id, c0_strategy_family_id,
+                        c0_code_sha256, c0_config_sha256, created_at_ns
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 9)
+                    """,
+                    (
+                        digest("invalid-h1-lineage"),
+                        invalid_sha,
+                        result.artifact_ids[2],
+                        result.artifact_ids[1],
+                        result.artifact_ids[0],
+                        result.artifact_ids[3],
+                        result.artifact_ids[4],
+                        result.artifact_ids[5],
+                        result.artifact_ids[6],
+                        args["c0_data_snapshot_id"],
+                        args["c0_experiment_run_id"],
+                        args["c0_candidate_id"],
+                        args["c0_package_id"],
+                        args["c0_trace_id"],
+                        args["c0_strategy_family_id"],
+                        args["c0_code_sha256"],
+                        args["c0_config_sha256"],
+                    ),
+                )
+            registry_connection.execute("ROLLBACK")
+        finally:
+            registry_connection.close()
+        self.assertEqual(self._count("h1_raw_lineage_evidence"), 1)
+        self.assertEqual(self._count("h1_lineage_materializations"), 1)
+        self.registry.verify_h1_lineage()
+
+    def test_h1_initialize_rejects_schema_valid_opaque_byte_tampering(self) -> None:
+        result = self.registry.record_h1_lineage(**self._h1_args())
+        connection = sqlite3.connect(self.database)
+        try:
+            trigger_sql = connection.execute(
+                """
+                SELECT sql FROM sqlite_master
+                WHERE type = 'trigger' AND name = 'h1_raw_lineage_evidence_no_update'
+                """
+            ).fetchone()[0]
+            connection.execute("DROP TRIGGER h1_raw_lineage_evidence_no_update")
+            connection.execute(
+                "UPDATE h1_raw_lineage_evidence SET raw_bytes = ? WHERE opaque_evidence_sha256 = ?",
+                (b"schema-valid-but-tampered", result.opaque_evidence_sha256),
+            )
+            connection.execute(trigger_sql)
+            connection.commit()
+        finally:
+            connection.close()
+
+        tampered_before = sha256_file(self.database)
+        with self.assertRaises(RegistryConflict):
+            self.registry.initialize()
+        self.assertEqual(sha256_file(self.database), tampered_before)
 
     def test_d0_trial_identity_holdout_and_stage_gate_are_immutable_and_idempotent(self) -> None:
         identity_args = {

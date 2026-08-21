@@ -120,6 +120,27 @@ def _metadata_snapshot(database: Path) -> dict[str, object]:
             snapshot["holdout_accesses"] = ()
             snapshot["trial_stage_transitions"] = ()
             snapshot["overfitting_assessments"] = ()
+        if "h1_raw_lineage_evidence" in tables:
+            snapshot["h1_raw_lineage_evidence"] = _rows(
+                connection,
+                "SELECT opaque_evidence_sha256, raw_bytes, c3_task_uuid, c3_result_uuid, "
+                "c3_result_raw_sha256, c3_exporter_commit, c2_canonical_wire_sha256, "
+                "c2_materialization_id, created_at_ns "
+                "FROM h1_raw_lineage_evidence ORDER BY opaque_evidence_sha256",
+            )
+            snapshot["h1_lineage_materializations"] = _rows(
+                connection,
+                "SELECT lineage_id, opaque_evidence_sha256, data_snapshot_artifact_id, "
+                "experiment_run_artifact_id, strategy_candidate_artifact_id, "
+                "strategy_package_artifact_id, replay_artifact_id, paper_artifact_id, "
+                "decision_artifact_id, c0_data_snapshot_id, c0_experiment_run_id, "
+                "c0_candidate_id, c0_package_id, c0_trace_id, c0_strategy_family_id, "
+                "c0_code_sha256, c0_config_sha256, created_at_ns "
+                "FROM h1_lineage_materializations ORDER BY lineage_id",
+            )
+        else:
+            snapshot["h1_raw_lineage_evidence"] = ()
+            snapshot["h1_lineage_materializations"] = ()
         return snapshot
     finally:
         connection.close()
@@ -304,8 +325,8 @@ class MigrationCompatibilityTests(unittest.TestCase):
             self.assertEqual(
                 ExperimentRegistry._schema_fingerprints(connection),
                 (
-                    registry_module._EXPECTED_D_BASE_SCHEMA_FINGERPRINT,
-                    registry_module._EXPECTED_D_TRIGGER_FINGERPRINT,
+                    registry_module._EXPECTED_H1_BASE_SCHEMA_FINGERPRINT,
+                    registry_module._EXPECTED_H1_TRIGGER_FINGERPRINT,
                 ),
             )
             self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
@@ -330,6 +351,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
                     registry_module._COMPATIBILITY_MIGRATION,
                     registry_module._D0_MIGRATION,
                     registry_module._D_MIGRATION,
+                    registry_module._H1_MIGRATION,
                 ),
             )
 
@@ -354,10 +376,13 @@ class MigrationCompatibilityTests(unittest.TestCase):
             self.assertEqual(after["holdout_accesses"], ())
             self.assertEqual(after["trial_stage_transitions"], ())
             self.assertEqual(after["overfitting_assessments"], ())
+            self.assertEqual(after["h1_raw_lineage_evidence"], ())
+            self.assertEqual(after["h1_lineage_materializations"], ())
             self.assertEqual(after["ledger"][:2], before["ledger"])
-            self.assertEqual(after["ledger"][-3][0], registry_module._COMPATIBILITY_MIGRATION)
-            self.assertEqual(after["ledger"][-2][0], registry_module._D0_MIGRATION)
-            self.assertEqual(after["ledger"][-1][0], registry_module._D_MIGRATION)
+            self.assertEqual(after["ledger"][-4][0], registry_module._COMPATIBILITY_MIGRATION)
+            self.assertEqual(after["ledger"][-3][0], registry_module._D0_MIGRATION)
+            self.assertEqual(after["ledger"][-2][0], registry_module._D_MIGRATION)
+            self.assertEqual(after["ledger"][-1][0], registry_module._H1_MIGRATION)
 
             registry.initialize()
             self.assertEqual(_metadata_snapshot(database), after)
@@ -404,6 +429,12 @@ class MigrationCompatibilityTests(unittest.TestCase):
                     connection.execute(
                         "SELECT 1 FROM schema_migrations WHERE migration_name = ?",
                         (registry_module._D_MIGRATION,),
+                    ).fetchone(),
+                )
+                self.assertIsNotNone(
+                    connection.execute(
+                        "SELECT 1 FROM schema_migrations WHERE migration_name = ?",
+                        (registry_module._H1_MIGRATION,),
                     ).fetchone(),
                 )
             finally:
@@ -589,7 +620,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
             try:
                 connection.execute(
                     "INSERT INTO schema_migrations VALUES (?, ?, ?)",
-                    ("006_future.sql", digest("future-migration"), 9),
+                    ("007_future.sql", digest("future-migration"), 9),
                 )
                 connection.commit()
             finally:
