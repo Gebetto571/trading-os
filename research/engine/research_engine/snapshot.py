@@ -87,6 +87,19 @@ class CanonicalParquetSnapshot:
 
 
 @dataclass(frozen=True)
+class CanonicalParquetMaterialization:
+    """A defensive, descriptor-bound frame view of one canonical snapshot."""
+
+    snapshot: CanonicalParquetSnapshot
+    _frame: pl.DataFrame
+
+    @property
+    def frame(self) -> pl.DataFrame:
+        """Return a clone so callers cannot mutate the retained frame view."""
+        return self._frame.clone()
+
+
+@dataclass(frozen=True)
 class _FileSnapshot:
     device: int
     inode: int
@@ -158,6 +171,46 @@ def build_canonical_snapshot(snapshot_root: Path) -> CanonicalParquetSnapshot:
         _canonical_manifest_bytes=manifest_bytes,
         snapshot_id=sha256_bytes(manifest_bytes),
     )
+
+
+def materialize_canonical_snapshot(snapshot_root: Path) -> CanonicalParquetMaterialization:
+    """Materialize one R0 snapshot without weakening its input integrity boundary.
+
+    The snapshot is first built through the existing R0 inventory checks.  Every
+    manifest-listed partition is then reopened through the same descriptor-bound
+    path, rehashed before and after the scan, and matched back to the immutable
+    manifest before its rows are accepted.
+    """
+    root = _validated_root(snapshot_root)
+    snapshot = build_canonical_snapshot(root)
+    manifest = snapshot.manifest
+    raw_entries = manifest.get("partitions")
+    raw_series = manifest.get("series")
+    if not isinstance(raw_entries, list) or not isinstance(raw_series, dict):
+        raise DatasetIntegrityError("canonical snapshot manifest shape is invalid")
+
+    frames: list[pl.DataFrame] = []
+    previous_last_close_time_us: Optional[int] = None
+    for expected in raw_entries:
+        if not isinstance(expected, dict) or not isinstance(expected.get("path"), str):
+            raise DatasetIntegrityError("canonical snapshot partition manifest is invalid")
+        relative_path = Path(expected["path"])
+        evidence, series, frame = _scan_partition(
+            root,
+            relative_path,
+            previous_last_close_time_us,
+            materialize=True,
+        )
+        if evidence != expected or series != raw_series or frame is None:
+            raise DatasetIntegrityError("canonical snapshot partition no longer matches manifest")
+        previous_last_close_time_us = evidence["last_close_time_us"]
+        frames.append(frame)
+
+    if not frames:
+        raise DatasetIntegrityError("canonical snapshot has no materializable partitions")
+    frame = pl.concat(frames, how="vertical").sort("open_time")
+    _validate_materialized_frame(frame, manifest)
+    return CanonicalParquetMaterialization(snapshot=snapshot, _frame=frame)
 
 
 def _validated_root(snapshot_root: Path) -> Path:
@@ -246,6 +299,22 @@ def _read_partition(
     relative_path: Path,
     previous_last_close_time_us: Optional[int],
 ) -> tuple[dict[str, Any], dict[str, str]]:
+    evidence, series, _ = _scan_partition(
+        root,
+        relative_path,
+        previous_last_close_time_us,
+        materialize=False,
+    )
+    return evidence, series
+
+
+def _scan_partition(
+    root: Path,
+    relative_path: Path,
+    previous_last_close_time_us: Optional[int],
+    *,
+    materialize: bool,
+) -> tuple[dict[str, Any], dict[str, str], Optional[pl.DataFrame]]:
     descriptor, before = _open_partition_descriptor(root, relative_path)
     try:
         first_sha256 = _hash_bound_descriptor(descriptor, before, relative_path)
@@ -263,6 +332,7 @@ def _read_partition(
                 pl.col("close_time").cast(pl.Int64).alias("close_time_us"),
             ]
         ).collect()
+        frame = lazy_frame.collect() if materialize else None
     except Exception as error:
         raise DatasetIntegrityError(f"partition scan failed: {relative_path}") from error
     finally:
@@ -307,7 +377,25 @@ def _read_partition(
         "path": relative_path.as_posix(),
         "row_count": timing.height,
         "sha256": first_sha256,
-    }, series)
+    }, series, frame)
+
+
+def _validate_materialized_frame(frame: pl.DataFrame, manifest: dict[str, Any]) -> None:
+    if frame.height != manifest.get("row_count"):
+        raise DatasetIntegrityError("materialized row count differs from canonical manifest")
+    if tuple(frame.columns) != _EXPECTED_COLUMNS:
+        raise DatasetIntegrityError("materialized columns differ from canonical schema")
+    for name, expected in _EXPECTED_SCHEMA.items():
+        if frame.schema[name] != expected:
+            raise DatasetIntegrityError(f"materialized column type differs: {name}")
+    timestamps = [int(value) for value in frame.get_column("open_time").cast(pl.Int64).to_list()]
+    if not timestamps or any(right <= left for left, right in zip(timestamps, timestamps[1:])):
+        raise DatasetIntegrityError("materialized timestamps are not strictly ordered and unique")
+    if (
+        timestamps[0] != manifest.get("first_open_time_us")
+        or timestamps[-1] != manifest.get("last_open_time_us")
+    ):
+        raise DatasetIntegrityError("materialized timestamp bounds differ from canonical manifest")
 
 
 def _single_nonempty_string(values: list[Any], name: str, relative_path: Path) -> str:

@@ -14,6 +14,7 @@ _ALLOWED_IMPORT_ROOTS = {
     "__future__",
     "argparse",
     "dataclasses",
+    "decimal",
     "hashlib",
     "json",
     "os",

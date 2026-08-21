@@ -20,7 +20,7 @@ import polars as pl
 from research_engine.errors import DatasetIntegrityError
 from research_engine.hashing import sha256_bytes
 from research_engine import snapshot as snapshot_module
-from research_engine.snapshot import build_canonical_snapshot
+from research_engine.snapshot import build_canonical_snapshot, materialize_canonical_snapshot
 
 
 _CANONICAL_SCHEMA = {
@@ -128,6 +128,40 @@ class CanonicalSnapshotTests(unittest.TestCase):
         self.assertEqual(snapshot.snapshot_id, sha256_bytes(snapshot.canonical_bytes()))
         self.assertEqual(snapshot.manifest["row_count"], 2)
         self.assertNotEqual(snapshot.manifest["partitions"][0]["sha256"], "0" * 64)
+
+    def test_public_materializer_reuses_snapshot_identity_and_defends_frame(self) -> None:
+        _write_partition(self.root, 2024, 2, _canonical_frame([3, 4]))
+        _write_partition(self.root, 2024, 1, _canonical_frame([1, 2]))
+
+        materialized = materialize_canonical_snapshot(self.root)
+
+        self.assertEqual(materialized.snapshot.snapshot_id, build_canonical_snapshot(self.root).snapshot_id)
+        self.assertEqual(materialized.frame.get_column("open_time").cast(pl.Int64).to_list(), [1, 2, 3, 4])
+        exposed = materialized.frame
+        exposed = exposed.with_columns(pl.lit(999).alias("trade_count"))
+        self.assertEqual(materialized.frame.get_column("trade_count").to_list(), [1, 1, 1, 1])
+
+    def test_public_materializer_rejects_path_replacement_after_descriptor_open(self) -> None:
+        target = _write_partition(self.root, 2024, 1, _canonical_frame([1]))
+        replacement_root = Path(self.temporary.name) / "replacement"
+        replacement = _write_partition(replacement_root, 2024, 1, _canonical_frame([99]))
+        original_scan = snapshot_module.pl.scan_parquet
+        calls = 0
+
+        def replace_only_during_materialization(path: str) -> pl.LazyFrame:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                os.replace(replacement, target)
+            return original_scan(path)
+
+        with mock.patch.object(
+            snapshot_module.pl,
+            "scan_parquet",
+            side_effect=replace_only_during_materialization,
+        ):
+            with self.assertRaises(DatasetIntegrityError):
+                materialize_canonical_snapshot(self.root)
 
     def test_schema_nulls_versions_and_close_time_fail_closed(self) -> None:
         invalid_schema = _canonical_frame([1]).with_columns(pl.col("trade_count").cast(pl.Float64))
