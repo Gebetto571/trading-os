@@ -46,7 +46,6 @@ _FORBIDDEN_IMPORT_ROOTS = {
 _FORBIDDEN_SOURCE_TERMS = (
     "execution_core",
     "execution-core",
-    "venue",
     "credential",
     "paper_trading",
     "live_trading",
@@ -72,6 +71,19 @@ class IsolationBoundaryTests(unittest.TestCase):
         )
         for forbidden in _FORBIDDEN_SOURCE_TERMS:
             self.assertNotIn(forbidden, combined_source)
+
+    def test_canonical_input_column_name_does_not_grant_a_venue_capability(self) -> None:
+        snapshot_source = (PACKAGE_ROOT / "snapshot.py").read_text(encoding="utf-8").lower()
+        self.assertIn('"venue"', snapshot_source)
+        for forbidden_capability in (
+            "venue_client",
+            "venueclient",
+            "connect_venue",
+            "broker_client",
+            "paper_trading",
+            "live_trading",
+        ):
+            self.assertNotIn(forbidden_capability, snapshot_source)
 
     def test_runtime_outputs_are_ignored_and_fixture_is_tracked_input(self) -> None:
         ignore_file = (ENGINE_ROOT / ".gitignore").read_text(encoding="utf-8")
