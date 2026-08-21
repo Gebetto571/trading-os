@@ -107,6 +107,40 @@ pub struct ThreeLedgerOutcome {
     pub reconciliation_hash: String,
 }
 
+/// Immutable C2 fields that bind a C3 export to one materialized C0 wire.
+///
+/// This is an in-memory input binding, not another wire protocol.  Its
+/// materialization identity is re-derived before any export is emitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct C2MaterializationBinding<'a> {
+    pub mapping_version: u64,
+    pub materialization_id: &'a str,
+    pub r1_source_bundle_sha256: &'a str,
+    pub expected_c0_contract_wire_sha256: &'a str,
+}
+
+/// Opaque, deterministic C3 evidence bytes for later lineage storage.
+///
+/// Consumers must preserve these exact canonical bytes and this external hash
+/// rather than parsing and reserializing them as a second source of truth.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct C3EvidenceExport {
+    canonical_bytes: Vec<u8>,
+    sha256: String,
+}
+
+impl C3EvidenceExport {
+    /// Exact canonical UTF-8 JSON bytes of the evidence export.
+    pub fn canonical_bytes(&self) -> &[u8] {
+        &self.canonical_bytes
+    }
+
+    /// SHA-256 of [`Self::canonical_bytes`].
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+}
+
 /// Decode, canonical-byte verify, and validate a C0 Strategy Contract V1.
 pub fn verify_contract(raw: &[u8]) -> Result<VerifiedContract, ContractError> {
     let document: WireContract = serde_json::from_slice(raw)
@@ -181,6 +215,103 @@ pub fn replay_three_ledgers(
 pub fn verify_and_replay_three_ledgers(raw: &[u8]) -> Result<ThreeLedgerOutcome, ContractError> {
     let contract = verify_contract(raw)?;
     replay_three_ledgers(&contract)
+}
+
+/// Verify one C2-materialized C0 wire, replay it through C1 and B0, and emit
+/// one deterministic, hash-bound C3 evidence export.
+///
+/// This operation is pure and in-memory.  It neither persists an artifact nor
+/// grants any paper/live, broker, venue, order, filesystem, or network
+/// capability.
+pub fn export_c1_b0_evidence(
+    raw: &[u8],
+    binding: C2MaterializationBinding<'_>,
+) -> Result<C3EvidenceExport, ContractError> {
+    validate_c2_materialization_binding(&binding)?;
+    let contract = verify_contract(raw)?;
+    if binding.expected_c0_contract_wire_sha256 != contract.raw_sha256() {
+        return Err(ContractError::new(
+            "C2 expected raw wire SHA-256 does not match verified contract",
+        ));
+    }
+
+    let materialization = C2MaterializationMaterial {
+        c0_contract_wire_sha256: contract.raw_sha256(),
+        mapping_version: binding.mapping_version,
+        r1_source_bundle_sha256: binding.r1_source_bundle_sha256,
+    };
+    if binding.materialization_id != sha256_hex(&canonical_json(&materialization)?) {
+        return Err(ContractError::new("C2 materialization identity mismatch"));
+    }
+
+    let c1 = replay_contract(&contract)?;
+    let b0 = replay_three_ledgers(&contract)?;
+    let c1_frame_count = usize_as_u64(c1.frame_count, "C1 frame count")?;
+    if b0.idealized.input_frame_count != c1.frame_count
+        || b0.idealized.applied_event_count != c1.frame_count
+        || b0.realistic_paper.input_frame_count != c1.frame_count
+        || b0.realistic_paper.applied_event_count != c1.frame_count
+        || b0.stressed.input_frame_count != c1.frame_count
+        || b0.stressed.applied_event_count != c1.frame_count
+    {
+        return Err(ContractError::new(
+            "C1 replay and B0 ledger frame counts do not agree",
+        ));
+    }
+
+    let b0_idealized = c3_ledger_evidence(&b0.idealized)?;
+    let b0_realistic_paper = c3_ledger_evidence(&b0.realistic_paper)?;
+    let b0_stressed = c3_ledger_evidence(&b0.stressed)?;
+    let b0_evidence = C3ThreeLedgerEvidence {
+        idealized: b0_idealized,
+        realistic_paper: b0_realistic_paper,
+        reconciliation_hash: b0.reconciliation_hash,
+        source_trace_id: b0.source_trace_id,
+        stressed: b0_stressed,
+    };
+
+    let document = C3EvidenceDocument {
+        b0: b0_evidence,
+        c0: C3ContractEvidence {
+            candidate_id: contract.document.strategy_candidate.candidate_id.clone(),
+            code_sha256: contract.document.strategy_candidate.code_sha256.clone(),
+            config_sha256: contract.document.strategy_candidate.config_sha256.clone(),
+            data_snapshot_id: contract
+                .document
+                .strategy_candidate
+                .data_snapshot_id
+                .clone(),
+            experiment_run_id: contract
+                .document
+                .strategy_candidate
+                .experiment_run_id
+                .clone(),
+            package_id: contract.document.strategy_package.package_id.clone(),
+            raw_c0_wire_sha256: contract.raw_sha256().to_owned(),
+            strategy_family_id: contract
+                .document
+                .strategy_candidate
+                .strategy_family_id
+                .clone(),
+            trace_id: contract.document.frozen_trace.trace_id.clone(),
+        },
+        c1: C3ReplayEvidence {
+            final_state_units: c1.final_state_units,
+            frame_count: c1_frame_count,
+        },
+        c2: C3MaterializationEvidence {
+            mapping_version: binding.mapping_version,
+            materialization_id: binding.materialization_id.to_owned(),
+            r1_source_bundle_sha256: binding.r1_source_bundle_sha256.to_owned(),
+        },
+        export_version: 1,
+    };
+    let canonical_bytes = canonical_json(&document)?;
+    let sha256 = sha256_hex(&canonical_bytes);
+    Ok(C3EvidenceExport {
+        canonical_bytes,
+        sha256,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -328,9 +459,113 @@ struct ReconciliationMaterial<'a> {
     stressed: &'a LedgerOutcome,
 }
 
+// These fields intentionally follow lexicographic JSON key order.  C3 owns
+// this one opaque export representation; later lineage storage keeps the raw
+// bytes rather than regenerating them from a map or a second schema.
+#[derive(Serialize)]
+struct C2MaterializationMaterial<'a> {
+    c0_contract_wire_sha256: &'a str,
+    mapping_version: u64,
+    r1_source_bundle_sha256: &'a str,
+}
+
+#[derive(Serialize)]
+struct C3EvidenceDocument {
+    b0: C3ThreeLedgerEvidence,
+    c0: C3ContractEvidence,
+    c1: C3ReplayEvidence,
+    c2: C3MaterializationEvidence,
+    export_version: u64,
+}
+
+#[derive(Serialize)]
+struct C3ThreeLedgerEvidence {
+    idealized: C3LedgerEvidence,
+    realistic_paper: C3LedgerEvidence,
+    reconciliation_hash: String,
+    source_trace_id: String,
+    stressed: C3LedgerEvidence,
+}
+
+#[derive(Serialize)]
+struct C3ContractEvidence {
+    candidate_id: String,
+    code_sha256: String,
+    config_sha256: String,
+    data_snapshot_id: String,
+    experiment_run_id: String,
+    package_id: String,
+    raw_c0_wire_sha256: String,
+    strategy_family_id: String,
+    trace_id: String,
+}
+
+#[derive(Serialize)]
+struct C3ReplayEvidence {
+    final_state_units: i64,
+    frame_count: u64,
+}
+
+#[derive(Serialize)]
+struct C3MaterializationEvidence {
+    mapping_version: u64,
+    materialization_id: String,
+    r1_source_bundle_sha256: String,
+}
+
+#[derive(Serialize)]
+struct C3LedgerEvidence {
+    applied_event_count: u64,
+    cost_bps: u64,
+    cumulative_cost_units: u64,
+    event_hash: String,
+    final_state_units: i64,
+    input_frame_count: u64,
+    latency_events: u64,
+    ledger: LedgerKind,
+    source_trace_id: String,
+    state_hash: String,
+}
+
 struct PendingFrame<'a> {
     apply_sequence: u64,
     frame: &'a TraceFrame,
+}
+
+fn validate_c2_materialization_binding(
+    binding: &C2MaterializationBinding<'_>,
+) -> Result<(), ContractError> {
+    if binding.mapping_version != 1 {
+        return Err(ContractError::new("unsupported C2 materialization version"));
+    }
+    validate_sha256("C2 materialization ID", binding.materialization_id)?;
+    validate_sha256(
+        "C2 R1 source bundle SHA-256",
+        binding.r1_source_bundle_sha256,
+    )?;
+    validate_sha256(
+        "C2 expected C0 raw wire SHA-256",
+        binding.expected_c0_contract_wire_sha256,
+    )
+}
+
+fn c3_ledger_evidence(outcome: &LedgerOutcome) -> Result<C3LedgerEvidence, ContractError> {
+    Ok(C3LedgerEvidence {
+        applied_event_count: usize_as_u64(outcome.applied_event_count, "B0 applied event count")?,
+        cost_bps: outcome.cost_bps,
+        cumulative_cost_units: outcome.cumulative_cost_units,
+        event_hash: outcome.event_hash.clone(),
+        final_state_units: outcome.final_state_units,
+        input_frame_count: usize_as_u64(outcome.input_frame_count, "B0 input frame count")?,
+        latency_events: outcome.latency_events,
+        ledger: outcome.ledger,
+        source_trace_id: outcome.source_trace_id.clone(),
+        state_hash: outcome.state_hash.clone(),
+    })
+}
+
+fn usize_as_u64(value: usize, label: &str) -> Result<u64, ContractError> {
+    u64::try_from(value).map_err(|_| ContractError::new(format!("{label} exceeds u64 range")))
 }
 
 fn validate_document(document: &WireContract) -> Result<(), ContractError> {
