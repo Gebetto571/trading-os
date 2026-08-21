@@ -69,6 +69,9 @@ pub struct ReplayOutcome {
 }
 
 /// The deterministic cost-and-latency projection applied to one verified trace.
+///
+/// `RealisticPaper` is only a paper-like cost/latency projection in memory; it
+/// does not place orders or grant PAPER-trading permission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum LedgerKind {
     #[serde(rename = "IDEALIZED")]

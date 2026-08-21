@@ -1,4 +1,4 @@
-# Güncel durum — 2026-08-04
+# Güncel durum — 2026-08-21
 
 ## Yerleşim ve yönetişim
 
@@ -118,9 +118,30 @@ SHA-256 `8589142094750f01106fcf02583f69452522ff8779c60f8c0a095cf2e1e4c11f`.
 Roadmap ve Packs sürümleri belirler. F7'deki ikinci hedef yalnız BTCUSDT ürün hattını
 anlatır; global ürün sırası değildir.
 
-Kapanış doğrulamasında Rust format, workspace check ve Clippy; execution-core'un
+Kapsam temizliği kapanışında Rust format, workspace check ve Clippy; execution-core'un
 51 testi; sağlıklı yerel PostgreSQL ile market-data'nın 50 testi; kök Python
-yönetişim/köprü paketinin 72 testi ve geçici izole ortamda research engine'in 38
-testi geçti. Aktif kod, bağımlılık, ayar, kimlik bilgisi, uç nokta, görev ve yaşayan
-belgelerde eski kapsam izi bulunmadı. Bu görevde kod, CI, veri şeması veya performans
-optimizasyonu uygulanmadı; P0–P5 mimari takip maddeleri ayrı backlog olarak kaldı.
+yönetişim/köprü paketinin 78 testi ve geçici izole ortamda research engine'in 38
+testi geçti. Bu bölüm yalnız 2026-08-21 kapsam temizliği kanıtıdır; sonraki strateji
+ve araştırma sözleşmesi değişiklikleri aşağıdaki yaşayan kayıtla izlenir.
+
+## R1/C0 araştırma ve replay hizalaması — 2026-08-21
+
+Sonraki uygulama dilimlerinde proje yolları ve anlamı şu şekilde sabitlendi:
+
+- `research/engine/research_engine/screening.py`, R0 snapshot'tan salt-okunur R1
+  aday/manifest/frozen-trace kanıtı üretir; SQLite, runtime artefaktı, emir, venue,
+  ağ veya PAPER/LIVE davranışı üretmez.
+- `schemas/r1-c0-materialization-v1.schema.json` ve golden vektörü, R1 kanıtını
+  `schemas/strategy-contract-v1.schema.json` C0 sözleşmesine tek yönlü bağlar.
+- `crates/strategy-runtime/`, C0 kanonik bayt doğrulaması ve bellekte deterministic
+  replay/projeksiyon katmanıdır; bağımsız execution-core veya market-data adaptörü
+  değildir ve canlı yetki vermez.
+- `tests/test_r1_c0_materialization.py`, `tests/test_strategy_contract.py` ve
+  `crates/strategy-runtime/tests/` ilgili şema, kimlik, replay, sınır ve performans
+  kapılarını taşır.
+
+2026-08-21 tam doğrulamasında kök Python paketi 89 test, research engine 55 test ve
+Rust workspace tüm hedefleri geçti. İlk strateji yönü hâlâ BTCUSDT price-action
+araştırmasıdır; R1/C0/replay kanıtı ayrı strateji kabul kartı olmadan PAPER,
+LIVE_CANARY veya LIVE yetkisi doğurmaz. XAU/USD ve isolated-margin karar kapıları
+önceki ayrı disposition ve insan onayı sırasını korur.

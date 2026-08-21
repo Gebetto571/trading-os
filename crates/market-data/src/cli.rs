@@ -1,5 +1,5 @@
 use chrono::{DateTime, Timelike, Utc};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Parser)]
@@ -48,10 +48,24 @@ pub enum Command {
     Aggregate,
     ExportParquet,
     VerifyParquet,
+    QueryCandles {
+        #[arg(long, default_value_t = 500)]
+        limit: i64,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long, value_enum, default_value_t = QueryFormat::Json)]
+        format: QueryFormat,
+    },
     Sync,
     CompareBinance,
     Run,
     Status,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum QueryFormat {
+    Json,
+    Csv,
 }
 impl Cli {
     pub fn range(&self) -> anyhow::Result<(DateTime<Utc>, DateTime<Utc>)> {
@@ -83,10 +97,29 @@ impl Cli {
         })
     }
     pub fn validate_scope(&self) -> anyhow::Result<()> {
+        let query_limit = match &self.command {
+            Command::QueryCandles { limit, .. } => Some(*limit),
+            _ => None,
+        };
         anyhow::ensure!(
-            self.venue == "binance" && self.market == "spot" && self.interval == "1m",
-            "this task supports only binance spot 1m"
+            self.venue == "binance" && self.market == "spot",
+            "this task supports only binance spot"
         );
+        if let Some(limit) = query_limit {
+            anyhow::ensure!(
+                matches!(self.interval.as_str(), "1m" | "15m" | "1h" | "4h" | "1d"),
+                "query-candles supports 1m, 15m, 1h, 4h and 1d intervals"
+            );
+            anyhow::ensure!(
+                (1..=4096).contains(&limit),
+                "query limit must be between 1 and 4096"
+            );
+        } else {
+            anyhow::ensure!(
+                self.interval == "1m",
+                "this task supports only binance spot 1m"
+            );
+        }
         anyhow::ensure!(
             !self.symbol.is_empty()
                 && self.symbol.len() <= 20
@@ -112,4 +145,38 @@ impl Cli {
 
 fn start_of_utc_day(value: DateTime<Utc>) -> bool {
     value.hour() == 0 && value.minute() == 0 && value.second() == 0 && value.nanosecond() == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_accepts_all_materialized_intervals() {
+        for interval in ["1m", "15m", "1h", "4h", "1d"] {
+            let cli = Cli::parse_from([
+                "market-data-import",
+                "query-candles",
+                "--interval",
+                interval,
+                "--limit",
+                "25",
+            ]);
+            cli.validate_scope().unwrap();
+        }
+    }
+
+    #[test]
+    fn non_query_commands_remain_scoped_to_one_minute() {
+        let cli = Cli::parse_from(["market-data-import", "validate", "--interval", "1h"]);
+        assert!(cli.validate_scope().is_err());
+    }
+
+    #[test]
+    fn query_rejects_unbounded_page_sizes() {
+        for limit in ["0", "4097"] {
+            let cli = Cli::parse_from(["market-data-import", "query-candles", "--limit", limit]);
+            assert!(cli.validate_scope().is_err());
+        }
+    }
 }

@@ -1,11 +1,26 @@
 use crate::candle::Candle;
 use anyhow::{bail, Context};
 use chrono::{DateTime, Datelike, Duration, Utc};
-use sqlx::{pool::PoolConnection, PgPool, Postgres, QueryBuilder, Row};
+use sqlx::{pool::PoolConnection, postgres::PgPoolOptions, PgPool, Postgres, QueryBuilder, Row};
 use std::collections::HashMap;
 
 pub async fn connect(url: &str) -> anyhow::Result<PgPool> {
     PgPool::connect(url).await.context("connect PostgreSQL")
+}
+
+pub async fn connect_read_only(url: &str) -> anyhow::Result<PgPool> {
+    PgPoolOptions::new()
+        .after_connect(|connection, _metadata| {
+            Box::pin(async move {
+                sqlx::query("SET default_transaction_read_only = on")
+                    .execute(connection)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect(url)
+        .await
+        .context("connect read-only PostgreSQL")
 }
 pub async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
     sqlx::migrate!().run(pool).await?;

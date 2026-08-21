@@ -14,7 +14,8 @@ Public GitHub deposu: <https://github.com/Gebetto571/trading-os>
 
 ## Hızlı başlangıç
 
-Python 3.11 veya daha yeni bir sürüm yeterlidir; harici paket gerekmez.
+Python 3.11 veya daha yeni bir sürüm, aşağıdaki köprü hızlı başlangıcı için
+yeterlidir; araştırma motoru bunun dışında paket-yerel Polars bağımlılığı kullanır.
 
 ```bash
 python3 -m trading_os_bridge init
@@ -91,6 +92,26 @@ isolated margin ise spot production kanıtı ve ayrı margin kararı sonrasına 
 Perpetual, futures, cross margin ve BIST/hisse bu kartın aktif ilk yol haritasında
 değildir.
 
+## Araştırma ve replay sözleşmeleri
+
+`research/engine` içindeki R1 katmanı, doğrulanmış salt-okunur veri snapshot'ından
+aday, manifest ve dondurulmuş simülasyon izi kanıtı üretir. Paket-yerel test ortamı
+gerektiğinde `research/engine/requirements.txt` içindeki Polars bağımlılığıyla
+kurulur; bu bağımlılık kök çalışma zamanına taşınmaz.
+
+`crates/strategy-runtime` yalnızca C0 Strategy Contract V1 kanonik baytlarını
+doğrular ve bellekte deterministic replay ile idealize/gerçekçi-maliyet/stres
+projeksiyonları üretir. Ağ, venue, broker, emir, kalıcı runtime yazımı, PAPER,
+LIVE_CANARY veya LIVE yetkisi vermez. R1→C0 bağı yalnız kanıt sözleşmesidir ve
+şu şemalarla korunur:
+
+- `schemas/strategy-contract-v1.schema.json` ve golden vektörü
+- `schemas/r1-c0-materialization-v1.schema.json` ve golden vektörü
+
+Bu katmanların çıktısı ayrı strateji kabul kartı olmadan ürün stratejisi veya canlı
+işlem kararı sayılmaz. R1→C0 ve replay bugün ayrı, salt-kanıt kapılarıdır; bunlar
+market-data ile execution-core arasında otomatik uçtan uca adapter çalıştırmaz.
+
 ## BTCUSDT tarihsel veri katmanı
 
 Rust veri hattı `crates/market-data` altında bulunur. Binance Global spot `BTCUSDT/1m`
@@ -109,6 +130,18 @@ cargo run --release -p trading-os-market-data --bin market-data-import -- run \
 
 Ayrıntılı mimari ve işletim bilgisi:
 [BTCUSDT veri katmanı](docs/architecture/market-data.md).
+
+Kanonik mumları salt okunur sorgulamak için:
+
+```bash
+cargo run --release -p trading-os-market-data --bin market-data-import -- \
+  query-candles --interval 1h \
+  --start 2026-08-01T00:00:00Z --end 2026-08-03T00:00:00Z --limit 100
+```
+
+Yanıt zaman sıralı JSON'dur. `has_more=true` ise `next_cursor` değeri sonraki
+çağrıya `--cursor` olarak verilir; komut veritabanında migration veya yazma yapmaz.
+`--format csv` yalnız mum satırlarını başlıklı CSV olarak üretir.
 
 Tarihsel kurulumdan sonra yeni kapanmış mumları artımlı almak için
 `market-data-import sync` kullanılır. Yerel macOS görevi bunu 15 dakikada bir

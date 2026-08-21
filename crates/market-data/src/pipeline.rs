@@ -2,11 +2,11 @@ use crate::{
     aggregate::aggregate_complete,
     archive::{daily_fallback, plan_archives, ArchiveItem, SourceType},
     candle::read_csv,
-    cli::{Cli, Command},
+    cli::{Cli, Command, QueryFormat},
     db,
     download::{cached_checksum, extract_single_csv, verify_cached, DownloadError, Downloader},
     health::{self, HealthReport, HealthStatus},
-    parquet_export, parquet_verify,
+    parquet_export, parquet_verify, query,
     rest::BinanceRest,
     validation::{validate, ValidationReport},
 };
@@ -75,6 +75,30 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<()> {
     if matches!(cli.command, Command::Sync) {
         return sync_with_health(cli, start, end).await;
     }
+    if let Command::QueryCandles {
+        limit,
+        cursor,
+        format,
+    } = &cli.command
+    {
+        let pool = db::connect_read_only(&cli.database_url()?).await?;
+        let cursor = query::parse_cursor(cursor.as_deref())?;
+        let page = query::load_page(
+            &pool,
+            &cli.symbol,
+            &cli.interval,
+            start,
+            end,
+            cursor,
+            *limit,
+        )
+        .await?;
+        match format {
+            QueryFormat::Json => println!("{}", serde_json::to_string(&page)?),
+            QueryFormat::Csv => query::write_csv(&page, std::io::stdout())?,
+        }
+        return Ok(());
+    }
     let pool = if matches!(cli.command, Command::Download) {
         None
     } else {
@@ -139,6 +163,7 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<()> {
             export_all(p, cli, start, end).await?;
         }
         Command::Sync => unreachable!(),
+        Command::QueryCandles { .. } => unreachable!(),
         Command::Plan => unreachable!(),
     }
     Ok(())
