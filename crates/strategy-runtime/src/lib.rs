@@ -68,6 +68,42 @@ pub struct ReplayOutcome {
     pub frame_count: usize,
 }
 
+/// The deterministic cost-and-latency projection applied to one verified trace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum LedgerKind {
+    #[serde(rename = "IDEALIZED")]
+    Idealized,
+    #[serde(rename = "REALISTIC_PAPER")]
+    RealisticPaper,
+    #[serde(rename = "STRESSED")]
+    Stressed,
+}
+
+/// Immutable, hash-bound result of one pure in-memory ledger projection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LedgerOutcome {
+    pub ledger: LedgerKind,
+    pub source_trace_id: String,
+    pub cost_bps: u64,
+    pub latency_events: u64,
+    pub event_hash: String,
+    pub state_hash: String,
+    pub final_state_units: i64,
+    pub input_frame_count: usize,
+    pub applied_event_count: usize,
+    pub cumulative_cost_units: u64,
+}
+
+/// Reconciled projections for one already verified canonical frozen trace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ThreeLedgerOutcome {
+    pub source_trace_id: String,
+    pub idealized: LedgerOutcome,
+    pub realistic_paper: LedgerOutcome,
+    pub stressed: LedgerOutcome,
+    pub reconciliation_hash: String,
+}
+
 /// Decode, canonical-byte verify, and validate a C0 Strategy Contract V1.
 pub fn verify_contract(raw: &[u8]) -> Result<VerifiedContract, ContractError> {
     let document: WireContract = serde_json::from_slice(raw)
@@ -92,6 +128,56 @@ pub fn replay_contract(contract: &VerifiedContract) -> Result<ReplayOutcome, Con
 pub fn verify_and_replay(raw: &[u8]) -> Result<ReplayOutcome, ContractError> {
     let contract = verify_contract(raw)?;
     replay_contract(&contract)
+}
+
+/// Replay the same verified trace as deterministic idealized, realistic, and
+/// stressed in-memory projections. This is a generic simulation utility only.
+pub fn replay_three_ledgers(
+    contract: &VerifiedContract,
+) -> Result<ThreeLedgerOutcome, ContractError> {
+    replay_document(&contract.document)?;
+    let profile = &contract.document.strategy_package.cost_latency_profile;
+    let idealized = replay_projection(
+        contract,
+        LedgerKind::Idealized,
+        profile.idealized_cost_bps,
+        profile.idealized_latency_events,
+    )?;
+    let realistic_paper = replay_projection(
+        contract,
+        LedgerKind::RealisticPaper,
+        profile.realistic_cost_bps,
+        profile.realistic_latency_events,
+    )?;
+    let stressed = replay_projection(
+        contract,
+        LedgerKind::Stressed,
+        profile.stressed_cost_bps,
+        profile.stressed_latency_events,
+    )?;
+    validate_reconciliation(&idealized, &realistic_paper, &stressed)?;
+
+    let reconciliation = ReconciliationMaterial {
+        source_trace_id: &idealized.source_trace_id,
+        idealized: &idealized,
+        realistic_paper: &realistic_paper,
+        stressed: &stressed,
+    };
+    let reconciliation_hash = sha256_hex(&canonical_json(&reconciliation)?);
+    Ok(ThreeLedgerOutcome {
+        source_trace_id: idealized.source_trace_id.clone(),
+        idealized,
+        realistic_paper,
+        stressed,
+        reconciliation_hash,
+    })
+}
+
+/// Verify canonical C0 wire bytes, then produce all three deterministic replay
+/// projections in one pure in-memory operation.
+pub fn verify_and_replay_three_ledgers(raw: &[u8]) -> Result<ThreeLedgerOutcome, ContractError> {
+    let contract = verify_contract(raw)?;
+    replay_three_ledgers(&contract)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,6 +292,42 @@ struct TraceMaterial<'a> {
     data_snapshot_id: &'a str,
     frames: &'a [TraceFrame],
     package_id: &'a str,
+}
+
+#[derive(Serialize)]
+struct LedgerEvent {
+    applied_sequence: u64,
+    cost_units: u64,
+    input_sequence: u64,
+    net_operand_units: i64,
+    operand_units: i64,
+    state_after_units: i64,
+}
+
+#[derive(Serialize)]
+struct LedgerStateMaterial<'a> {
+    applied_event_count: usize,
+    cost_bps: u64,
+    cumulative_cost_units: u64,
+    event_hash: &'a str,
+    final_state_units: i64,
+    input_frame_count: usize,
+    latency_events: u64,
+    ledger: LedgerKind,
+    source_trace_id: &'a str,
+}
+
+#[derive(Serialize)]
+struct ReconciliationMaterial<'a> {
+    idealized: &'a LedgerOutcome,
+    realistic_paper: &'a LedgerOutcome,
+    source_trace_id: &'a str,
+    stressed: &'a LedgerOutcome,
+}
+
+struct PendingFrame<'a> {
+    apply_sequence: u64,
+    frame: &'a TraceFrame,
 }
 
 fn validate_document(document: &WireContract) -> Result<(), ContractError> {
@@ -377,6 +499,184 @@ fn replay_document(document: &WireContract) -> Result<ReplayOutcome, ContractErr
         final_state_units: state,
         frame_count: document.frozen_trace.frames.len(),
     })
+}
+
+fn replay_projection(
+    contract: &VerifiedContract,
+    ledger: LedgerKind,
+    cost_bps: u64,
+    latency_events: u64,
+) -> Result<LedgerOutcome, ContractError> {
+    let document = &contract.document;
+    let package = &document.strategy_package;
+    let frames = &document.frozen_trace.frames;
+    let mut pending = Vec::with_capacity(frames.len());
+    let mut next_pending = 0_usize;
+    let mut events = Vec::with_capacity(frames.len());
+    let mut state = package.initial_state_units;
+    let mut cumulative_cost_units = 0_u64;
+
+    for frame in frames {
+        let apply_sequence = frame
+            .sequence
+            .checked_add(latency_events)
+            .ok_or_else(|| ContractError::new("ledger latency sequence overflows u64"))?;
+        pending.push(PendingFrame {
+            apply_sequence,
+            frame,
+        });
+        while next_pending < pending.len() && pending[next_pending].apply_sequence <= frame.sequence
+        {
+            apply_pending_frame(
+                &pending[next_pending],
+                cost_bps,
+                &mut state,
+                &mut cumulative_cost_units,
+                package.max_abs_state_units,
+                &mut events,
+            )?;
+            next_pending += 1;
+        }
+    }
+    while next_pending < pending.len() {
+        apply_pending_frame(
+            &pending[next_pending],
+            cost_bps,
+            &mut state,
+            &mut cumulative_cost_units,
+            package.max_abs_state_units,
+            &mut events,
+        )?;
+        next_pending += 1;
+    }
+
+    if events.len() != frames.len() {
+        return Err(ContractError::new(
+            "ledger did not apply every source frame",
+        ));
+    }
+    let event_hash = sha256_hex(&canonical_json(&events)?);
+    let source_trace_id = contract.trace_id().to_owned();
+    let state_material = LedgerStateMaterial {
+        applied_event_count: events.len(),
+        cost_bps,
+        cumulative_cost_units,
+        event_hash: &event_hash,
+        final_state_units: state,
+        input_frame_count: frames.len(),
+        latency_events,
+        ledger,
+        source_trace_id: &source_trace_id,
+    };
+    let state_hash = sha256_hex(&canonical_json(&state_material)?);
+    Ok(LedgerOutcome {
+        ledger,
+        source_trace_id,
+        cost_bps,
+        latency_events,
+        event_hash,
+        state_hash,
+        final_state_units: state,
+        input_frame_count: frames.len(),
+        applied_event_count: events.len(),
+        cumulative_cost_units,
+    })
+}
+
+fn apply_pending_frame(
+    pending: &PendingFrame<'_>,
+    cost_bps: u64,
+    state: &mut i64,
+    cumulative_cost_units: &mut u64,
+    max_abs_state_units: u64,
+    events: &mut Vec<LedgerEvent>,
+) -> Result<(), ContractError> {
+    if let Some(previous) = events.last() {
+        if previous.input_sequence >= pending.frame.sequence
+            || previous.applied_sequence >= pending.apply_sequence
+        {
+            return Err(ContractError::new(
+                "ledger event ordering is not strictly increasing",
+            ));
+        }
+    }
+    let cost_units = cost_units(pending.frame.operand_units, cost_bps)?;
+    let cost_as_i64 = i64::try_from(cost_units)
+        .map_err(|_| ContractError::new("ledger cost exceeds i64 range"))?;
+    let net_operand_units = pending
+        .frame
+        .operand_units
+        .checked_sub(cost_as_i64)
+        .ok_or_else(|| ContractError::new("ledger net operand overflows i64"))?;
+    let next_state = state
+        .checked_add(net_operand_units)
+        .ok_or_else(|| ContractError::new("ledger transition overflows i64"))?;
+    if next_state.unsigned_abs() > max_abs_state_units {
+        return Err(ContractError::new(
+            "ledger transition exceeds package bound",
+        ));
+    }
+    *cumulative_cost_units = cumulative_cost_units
+        .checked_add(cost_units)
+        .ok_or_else(|| ContractError::new("ledger cumulative cost overflows u64"))?;
+    *state = next_state;
+    events.push(LedgerEvent {
+        applied_sequence: pending.apply_sequence,
+        cost_units,
+        input_sequence: pending.frame.sequence,
+        net_operand_units,
+        operand_units: pending.frame.operand_units,
+        state_after_units: next_state,
+    });
+    Ok(())
+}
+
+fn cost_units(operand_units: i64, cost_bps: u64) -> Result<u64, ContractError> {
+    let scaled = (operand_units.unsigned_abs() as u128)
+        .checked_mul(cost_bps as u128)
+        .ok_or_else(|| ContractError::new("ledger cost multiplication overflows u128"))?;
+    u64::try_from(scaled / 10_000_u128)
+        .map_err(|_| ContractError::new("ledger cost exceeds u64 range"))
+}
+
+fn validate_reconciliation(
+    idealized: &LedgerOutcome,
+    realistic_paper: &LedgerOutcome,
+    stressed: &LedgerOutcome,
+) -> Result<(), ContractError> {
+    if idealized.source_trace_id != realistic_paper.source_trace_id
+        || idealized.source_trace_id != stressed.source_trace_id
+    {
+        return Err(ContractError::new("ledger source trace mismatch"));
+    }
+    if idealized.input_frame_count != realistic_paper.input_frame_count
+        || idealized.input_frame_count != stressed.input_frame_count
+        || idealized.applied_event_count != idealized.input_frame_count
+        || realistic_paper.applied_event_count != realistic_paper.input_frame_count
+        || stressed.applied_event_count != stressed.input_frame_count
+    {
+        return Err(ContractError::new("ledger event count mismatch"));
+    }
+    if idealized.cost_bps != 0
+        || idealized.latency_events != 0
+        || idealized.cumulative_cost_units != 0
+    {
+        return Err(ContractError::new("idealized ledger profile is not zero"));
+    }
+    if realistic_paper.cost_bps > stressed.cost_bps
+        || realistic_paper.latency_events > stressed.latency_events
+        || realistic_paper.cumulative_cost_units > stressed.cumulative_cost_units
+    {
+        return Err(ContractError::new("stressed ledger cost is not monotonic"));
+    }
+    if idealized.final_state_units < realistic_paper.final_state_units
+        || realistic_paper.final_state_units < stressed.final_state_units
+    {
+        return Err(ContractError::new(
+            "ledger final state is not cost monotonic",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_sha256(label: &str, value: &str) -> Result<(), ContractError> {
