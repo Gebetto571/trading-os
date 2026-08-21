@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trading-os.local/schemas/strategy-contract-v1.schema.json",
+  "title": "Trading OS Strategy Contract V1",
+  "description": "A static, non-executable research simulation contract for a StrategyCandidate, StrategyPackage, and FrozenTrace.",
+  "$comment": "Canonical V1 wire bytes are UTF-8 JSON with lexicographically sorted keys, separators comma and colon, ensure_ascii true, allow_nan false, and no duplicate keys or insignificant whitespace. Candidate, package, and trace IDs are SHA-256 hashes of their respective canonical component object with its own ID field omitted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "strategy_candidate",
+    "strategy_package",
+    "frozen_trace"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "#/$defs/version"
+    },
+    "strategy_candidate": {
+      "$ref": "#/$defs/strategy_candidate"
+    },
+    "strategy_package": {
+      "$ref": "#/$defs/strategy_package"
+    },
+    "frozen_trace": {
+      "$ref": "#/$defs/frozen_trace"
+    }
+  },
+  "$defs": {
+    "version": {
+      "type": "integer",
+      "format": "trading-os-strict-integer",
+      "const": 1
+    },
+    "strict_integer": {
+      "type": "integer",
+      "format": "trading-os-strict-integer",
+      "minimum": -9223372036854775808,
+      "maximum": 9223372036854775807
+    },
+    "nonnegative_integer": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/strict_integer"
+        },
+        {
+          "minimum": 0
+        }
+      ]
+    },
+    "positive_integer": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/strict_integer"
+        },
+        {
+          "minimum": 1
+        }
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "stable_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{2,63}$"
+    },
+    "parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "value"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/stable_name"
+        },
+        "value": {
+          "$ref": "#/$defs/strict_integer"
+        }
+      }
+    },
+    "strategy_candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_id",
+        "strategy_family_id",
+        "experiment_run_id",
+        "data_snapshot_id",
+        "code_sha256",
+        "config_sha256",
+        "parameter_vector"
+      ],
+      "properties": {
+        "candidate_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "strategy_family_id": {
+          "$ref": "#/$defs/stable_name"
+        },
+        "experiment_run_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "data_snapshot_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "code_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "config_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "parameter_vector": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/parameter"
+          }
+        }
+      }
+    },
+    "cost_latency_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idealized_cost_bps",
+        "idealized_latency_events",
+        "realistic_cost_bps",
+        "realistic_latency_events",
+        "stressed_cost_bps",
+        "stressed_latency_events"
+      ],
+      "properties": {
+        "idealized_cost_bps": {
+          "$ref": "#/$defs/nonnegative_integer",
+          "const": 0
+        },
+        "idealized_latency_events": {
+          "$ref": "#/$defs/nonnegative_integer",
+          "const": 0
+        },
+        "realistic_cost_bps": {
+          "$ref": "#/$defs/nonnegative_integer"
+        },
+        "realistic_latency_events": {
+          "$ref": "#/$defs/nonnegative_integer"
+        },
+        "stressed_cost_bps": {
+          "$ref": "#/$defs/nonnegative_integer"
+        },
+        "stressed_latency_events": {
+          "$ref": "#/$defs/nonnegative_integer"
+        }
+      }
+    },
+    "strategy_package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "package_id",
+        "candidate_id",
+        "kernel_id",
+        "execution_capability",
+        "initial_state_units",
+        "max_abs_state_units",
+        "cost_latency_profile"
+      ],
+      "properties": {
+        "package_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "candidate_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "kernel_id": {
+          "const": "generic-accumulator-v1"
+        },
+        "execution_capability": {
+          "const": "RESEARCH_SIMULATION_ONLY"
+        },
+        "initial_state_units": {
+          "$ref": "#/$defs/strict_integer"
+        },
+        "max_abs_state_units": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "cost_latency_profile": {
+          "$ref": "#/$defs/cost_latency_profile"
+        }
+      }
+    },
+    "trace_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "operation",
+        "operand_units",
+        "expected_state_units"
+      ],
+      "properties": {
+        "sequence": {
+          "$ref": "#/$defs/nonnegative_integer"
+        },
+        "operation": {
+          "const": "ACCUMULATE"
+        },
+        "operand_units": {
+          "$ref": "#/$defs/strict_integer"
+        },
+        "expected_state_units": {
+          "$ref": "#/$defs/strict_integer"
+        }
+      }
+    },
+    "frozen_trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trace_id",
+        "package_id",
+        "data_snapshot_id",
+        "frames"
+      ],
+      "properties": {
+        "trace_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "package_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "data_snapshot_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10000,
+          "items": {
+            "$ref": "#/$defs/trace_frame"
+          }
+        }
+      }
+    }
+  }
+}
