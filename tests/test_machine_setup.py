@@ -94,6 +94,8 @@ class MachineSetupTests(unittest.TestCase):
         self.json_file(folder / "manifest.json", {
             "schema_version": 1, "verdict": "PASS", "sha256": sha,
             "source_commit": "a" * 40, "source_tree_sha256": "b" * 64,
+            "test_report_sha256": "c" * 64,
+            "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         })
         self.json_file(self.runtime / "active.json", {
             "schema_version": 1, "current": relative, "previous": None,
@@ -253,7 +255,10 @@ class MachineSetupTests(unittest.TestCase):
         self.assertEqual(self.state()["previous"], first)
         result = self.script("deploy-market-data.sh", "rollback")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.state(), {"schema_version": 1, "current": first, "previous": second})
+        self.assertEqual(self.state()["current"], first)
+        self.assertEqual(self.state()["previous"], second)
+        self.assertEqual(self.state()["current_acceptance"]["release"], first)
+        self.assertEqual(self.state()["previous_acceptance"]["release"], second)
 
     def test_failed_report_never_changes_the_active_pair(self):
         report = self.prepare_candidate()
@@ -266,6 +271,124 @@ class MachineSetupTests(unittest.TestCase):
         result = self.script("deploy-market-data.sh", "activate", "--report", str(report))
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((self.runtime / "active.json").read_bytes(), old_state)
+
+    def test_same_binary_new_commit_refreshes_acceptance_not_immutable_manifest(self):
+        report = self.prepare_candidate()
+        self.assertEqual(self.script("deploy-market-data.sh", "activate", "--report", str(report)).returncode, 0)
+        first_state = self.state()
+        report = self.prepare_candidate("/usr/bin/false")
+        self.assertEqual(self.script("deploy-market-data.sh", "activate", "--report", str(report)).returncode, 0)
+        before = self.state()
+        manifest = self.runtime / before["current"] / "manifest.json"
+        immutable_before = manifest.read_bytes()
+
+        (self.repo / "README.md").write_text("Documentation-only revision.\n")
+        for args in (
+            ["add", "README.md"],
+            ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+             "commit", "-qm", "Documentation only"],
+        ):
+            subprocess.run(["git", *args], cwd=self.repo, env=self.environment,
+                           capture_output=True, check=True)
+        report = self.prepare_candidate("/usr/bin/false")
+        accepted_report = json.loads(report.read_text())
+        result = self.script("deploy-market-data.sh", "activate", "--report", str(report))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        after = self.state()
+        self.assertEqual(after["current"], before["current"])
+        self.assertEqual(after["previous"], before["previous"])
+        self.assertEqual(after["previous_acceptance"], before["previous_acceptance"])
+        self.assertEqual(manifest.read_bytes(), immutable_before)
+        receipt = after["current_acceptance"]
+        self.assertEqual(receipt["source_commit"], accepted_report["source_commit"])
+        self.assertEqual(receipt["source_tree_sha256"], accepted_report["source_tree_sha256"])
+        self.assertEqual(receipt["test_report_sha256"], hashlib.sha256(report.read_bytes()).hexdigest())
+        self.assertEqual(receipt["origin"], "activation")
+        self.assertNotEqual(receipt["source_commit"], before["current_acceptance"]["source_commit"])
+        self.assertNotEqual(receipt["accepted_at"], before["current_acceptance"]["accepted_at"])
+
+        result = self.script("deploy-market-data.sh", "rollback")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rolled_back = self.state()
+        self.assertEqual(rolled_back["current"], first_state["current"])
+        self.assertEqual(rolled_back["current_acceptance"], first_state["current_acceptance"])
+        self.assertEqual(rolled_back["previous_acceptance"], receipt)
+        self.assertEqual(self.script("deploy-market-data.sh", "rollback").returncode, 0)
+        self.assertEqual(self.state()["current_acceptance"], receipt)
+
+    def test_first_release_has_no_automatic_rollback_and_state_is_preserved(self):
+        report = self.prepare_candidate()
+        self.assertEqual(self.script("deploy-market-data.sh", "activate", "--report", str(report)).returncode, 0)
+        self.assertIsNone(self.state()["previous"])
+        self.assertIsNone(self.state()["previous_acceptance"])
+        before = (self.runtime / "active.json").read_bytes()
+        result = self.script("deploy-market-data.sh", "rollback")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.runtime / "active.json").read_bytes(), before)
+
+    def test_legacy_schema_one_uses_explicit_original_manifest_acceptance(self):
+        report = self.prepare_candidate()
+        self.assertEqual(self.script("deploy-market-data.sh", "activate", "--report", str(report)).returncode, 0)
+        legacy = self.state()
+        legacy.pop("current_acceptance")
+        legacy.pop("previous_acceptance")
+        self.json_file(self.runtime / "active.json", legacy)
+        original = json.loads((self.runtime / legacy["current"] / "manifest.json").read_text())
+        report = self.prepare_candidate("/usr/bin/false")
+        result = self.script("deploy-market-data.sh", "activate", "--report", str(report))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = self.state()["previous_acceptance"]
+        self.assertEqual(receipt["origin"], "legacy_manifest")
+        self.assertEqual(receipt["source_commit"], original["source_commit"])
+        self.assertEqual(receipt["source_tree_sha256"], original["source_tree_sha256"])
+        self.assertEqual(receipt["test_report_sha256"], original["test_report_sha256"])
+        self.assertEqual(receipt["accepted_at"], original["created_at"])
+        self.assertEqual(self.script("deploy-market-data.sh", "rollback").returncode, 0)
+        self.assertEqual(self.state()["current_acceptance"], receipt)
+
+    def test_mismatched_previous_acceptance_blocks_rollback_without_writes(self):
+        report = self.prepare_candidate()
+        self.assertEqual(self.script("deploy-market-data.sh", "activate", "--report", str(report)).returncode, 0)
+        report = self.prepare_candidate("/usr/bin/false")
+        self.assertEqual(self.script("deploy-market-data.sh", "activate", "--report", str(report)).returncode, 0)
+        state = self.state()
+        state["previous_acceptance"]["release"] = state["current"]
+        self.json_file(self.runtime / "active.json", state)
+        before = (self.runtime / "active.json").read_bytes()
+        result = self.script("deploy-market-data.sh", "rollback")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.runtime / "active.json").read_bytes(), before)
+
+    def test_explicit_null_current_acceptance_is_not_treated_as_legacy(self):
+        report = self.prepare_candidate()
+        self.assertEqual(self.script("deploy-market-data.sh", "activate", "--report", str(report)).returncode, 0)
+        state = self.state()
+        state["current_acceptance"] = None
+        self.json_file(self.runtime / "active.json", state)
+        before = (self.runtime / "active.json").read_bytes()
+        self.assertNotEqual(self.script("deploy-market-data.sh", "status").returncode, 0)
+        self.assertNotEqual(self.script("deploy-market-data.sh", "activate", "--report", str(report)).returncode, 0)
+        self.assertEqual((self.runtime / "active.json").read_bytes(), before)
+
+    def test_boolean_schema_and_null_previous_receipts_fail_without_state_writes(self):
+        report = self.prepare_candidate()
+        self.assertEqual(self.script("deploy-market-data.sh", "activate", "--report", str(report)).returncode, 0)
+        report = self.prepare_candidate("/usr/bin/false")
+        self.assertEqual(self.script("deploy-market-data.sh", "activate", "--report", str(report)).returncode, 0)
+        original = self.state()
+        for slot, value in (("current", True), ("previous", True), ("previous", None)):
+            with self.subTest(slot=slot, value=value):
+                state = json.loads(json.dumps(original))
+                if value is None:
+                    state[slot + "_acceptance"] = None
+                else:
+                    state[slot + "_acceptance"]["schema_version"] = value
+                self.json_file(self.runtime / "active.json", state)
+                before = (self.runtime / "active.json").read_bytes()
+                operation = "status" if slot == "current" else "rollback"
+                result = self.script("deploy-market-data.sh", operation)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual((self.runtime / "active.json").read_bytes(), before)
 
     def test_source_change_after_build_prevents_activation(self):
         report = self.prepare_candidate()

@@ -85,13 +85,20 @@ def regular_owned(path, executable=False):
     return info
 
 
-def read_json(path):
+def read_json_with_digest(path):
     if regular_owned(path).st_size > 1024 * 1024:
         raise ValueError("metadata too large")
-    result = json.loads(Path(path).read_text())
+    raw = Path(path).read_bytes()
+    if len(raw) > 1024 * 1024:
+        raise ValueError("metadata too large")
+    result = json.loads(raw)
     if not isinstance(result, dict):
         raise ValueError("metadata must be an object")
-    return result
+    return result, hashlib.sha256(raw).hexdigest()
+
+
+def read_json(path):
+    return read_json_with_digest(path)[0]
 
 
 def atomic_bytes(path, content, mode=0o600):
@@ -181,6 +188,42 @@ def validate_release(relative):
     return binary
 
 
+def receipt_for(state, slot):
+    relative = state.get(slot)
+    receipt_key = slot + "_acceptance"
+    receipt = state.get(receipt_key)
+    if relative is None:
+        if receipt is not None:
+            raise ValueError("acceptance exists without a release")
+        return None
+    if not isinstance(relative, str) or not re.fullmatch(r"releases/[0-9a-f]{64}", relative):
+        raise ValueError("invalid acceptance release reference")
+    if receipt_key not in state:
+        # Older schema-1 states did not record each activation. Preserve the
+        # original verified build's provenance, explicitly marked as legacy;
+        # do not attribute a later checkout or test run to it.
+        manifest = read_json(runtime / relative / "manifest.json")
+        receipt = {
+            "schema_version": 1, "release": relative, "origin": "legacy_manifest",
+            "source_commit": manifest["source_commit"],
+            "source_tree_sha256": manifest["source_tree_sha256"],
+            "test_report_sha256": manifest["test_report_sha256"],
+            "accepted_at": manifest["created_at"],
+        }
+    if (not isinstance(receipt, dict) or type(receipt.get("schema_version")) is not int
+            or receipt.get("schema_version") != 1
+            or receipt.get("release") != relative
+            or receipt.get("origin") not in {"activation", "legacy_manifest"}
+            or not re.fullmatch(r"[0-9a-f]{40}", str(receipt.get("source_commit", "")))
+            or not re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("source_tree_sha256", "")))
+            or not re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("test_report_sha256", "")))):
+        raise ValueError("acceptance metadata invalid")
+    accepted_at = dt.datetime.fromisoformat(str(receipt.get("accepted_at", "")).replace("Z", "+00:00"))
+    if accepted_at.tzinfo is None:
+        raise ValueError("acceptance timestamp must include its timezone")
+    return receipt
+
+
 def active_state():
     if (not runtime.is_absolute() or runtime.is_symlink() or runtime.resolve() == root
             or root in runtime.resolve().parents):
@@ -189,13 +232,14 @@ def active_state():
     if state.get("schema_version") != 1:
         raise ValueError("invalid active release state")
     validate_release(state.get("current"))
+    receipt_for(state, "current")
     return state
 
 
 def activate(report_path):
     runtime_directory()
     candidate = read_json(root / "target/deploy-market-data/candidate.json")
-    report = read_json(report_path)
+    report, report_sha = read_json_with_digest(report_path)
     commit, tree = run(["git", "rev-parse", "HEAD"]), source_hash()
     if (report.get("schema_version") != 1 or report.get("verdict") != "PASS"
             or report.get("isolated_database") is not True
@@ -225,7 +269,7 @@ def activate(report_path):
             manifest = {
                 "schema_version": 1, "verdict": "PASS", "sha256": actual,
                 "source_commit": commit, "source_tree_sha256": tree,
-                "test_report_sha256": digest(report_path),
+                "test_report_sha256": report_sha,
                 "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             }
             atomic_json(staging / "manifest.json", manifest)
@@ -237,15 +281,23 @@ def activate(report_path):
                 shutil.rmtree(staging)
     validate_release(relative)
     old = active_state() if (runtime / "active.json").exists() else {}
-    if old.get("current") == relative:
-        print("Already active; previous release preserved.")
-        return
-    # Both pointers change in a single atomic replacement. In-flight runs keep
-    # their already resolved immutable executable.
+    same_binary = old.get("current") == relative
+    new_receipt = {
+        "schema_version": 1, "release": relative, "origin": "activation",
+        "source_commit": commit, "source_tree_sha256": tree,
+        "test_report_sha256": report_sha,
+        "accepted_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+    }
+    # Acceptance belongs to this activation, not the first stored copy of the
+    # binary. Documentation-only changes can have identical executable bytes.
+    # Both pointers and both receipts change in one atomic replacement.
     atomic_json(runtime / "active.json", {
-        "schema_version": 1, "current": relative, "previous": old.get("current"),
+        "schema_version": 1, "current": relative,
+        "previous": old.get("previous") if same_binary else old.get("current"),
+        "current_acceptance": new_receipt,
+        "previous_acceptance": receipt_for(old, "previous" if same_binary else "current"),
     })
-    print("Verified release activated.")
+    print("Verified acceptance refreshed; previous release preserved." if same_binary else "Verified release activated.")
 
 
 def configure():
@@ -313,6 +365,8 @@ try:
         validate_release(state.get("previous"))
         atomic_json(runtime / "active.json", {
             "schema_version": 1, "current": state["previous"], "previous": state["current"],
+            "current_acceptance": receipt_for(state, "previous"),
+            "previous_acceptance": receipt_for(state, "current"),
         })
         print("Previous verified release restored.")
     elif action == "configure":

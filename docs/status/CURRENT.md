@@ -28,8 +28,9 @@
   ham veri ve sonuçlar Git'e gönderilmez. Yöntem, sonuç görüldükten sonra ayarlanmaz.
 - Kurulum, sürüm etkinleştirme, ayrı veritabanında tam test ve yedek komutları
   `docs/operations.md` içindedir. Rutin geliştirme çalışan ikiliyi değiştirmez.
-  Bütün çalışma diliminin test, etkinleştirme ve GitHub kabulü aynı operasyon
-  belgesindeki tarihli son kayıttan ve güncel sağlık kontrolünden okunur.
+  İlk kabulde 221 Python ve 114 Rust kontrolü geçti. Docker yeniden başlatması
+  ve geliştirme ikilisi yokken veri toplama sınandı. Son kabul ve GitHub durumu
+  operasyon belgesindeki tarihli kayıttan, aktif kabul kaydından ve CI’dan okunur.
 
 Sıradaki araştırma işi, reddedilmiş yöntem üzerinde eşikleri oynatmak değildir.
 Yeni bir hipotez gerekiyorsa tek görev, açık kabul ölçütü ve sonuç görülmeden

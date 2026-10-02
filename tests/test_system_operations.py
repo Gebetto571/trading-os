@@ -256,7 +256,7 @@ class ReadinessTests(unittest.TestCase):
         self.assertTrue(rust["ok"])
         self.assertEqual(rust["detail"], "rustc 1.88.0")
 
-    def test_active_binary_hash_is_verified(self):
+    def deployment_fixture(self):
         data = b"binary fixture"
         sha = hashlib.sha256(data).hexdigest()
         directory = self.root / "releases" / sha
@@ -264,13 +264,64 @@ class ReadinessTests(unittest.TestCase):
         binary = directory / "market-data-import"
         binary.write_bytes(data)
         binary.chmod(0o700)
-        (directory / "manifest.json").write_text(json.dumps(
+        manifest = directory / "manifest.json"
+        manifest.write_text(json.dumps(
             dict(schema_version=1, verdict="PASS", sha256=sha, source_commit="a" * 40,
-                 source_tree_sha256="b" * 64)))
-        (self.root / "active.json").write_text(json.dumps(
+                 source_tree_sha256="b" * 64, test_report_sha256="c" * 64,
+                 created_at="2026-10-02T10:00:00Z")))
+        state = self.root / "active.json"
+        state.write_text(json.dumps(
             dict(schema_version=1, current="releases/" + sha, previous=None)))
+        return sha, binary, manifest, state
+
+    def test_active_binary_hash_is_verified(self):
+        sha, binary, _, _ = self.deployment_fixture()
         self.assertEqual(CHECKS.inspect_deployment(self.root)["binary_sha256"], sha)
         binary.write_bytes(b"modified")
+        with self.assertRaises(ValueError):
+            CHECKS.inspect_deployment(self.root)
+
+    def test_same_binary_shows_original_build_and_current_acceptance_separately(self):
+        sha, _, _, state = self.deployment_fixture()
+        receipt = dict(schema_version=1, release="releases/" + sha,
+                       source_commit="d" * 40, source_tree_sha256="e" * 64,
+                       test_report_sha256="f" * 64, accepted_at="2026-10-02T11:00:00Z",
+                       origin="activation")
+        record = json.loads(state.read_text())
+        record["current_acceptance"] = receipt
+        state.write_text(json.dumps(record))
+        result = CHECKS.inspect_deployment(self.root)
+        self.assertEqual(result["binary_source_commit"], "a" * 40)
+        self.assertEqual(result["accepted_source_commit"], "d" * 40)
+        self.assertEqual(result["source_commit"], "d" * 40)
+        self.assertEqual(result["accepted_test_report_sha256"], "f" * 64)
+        self.assertEqual(result["acceptance_origin"], "activation")
+
+    def test_malformed_acceptance_cannot_be_replaced_by_legacy_fallback(self):
+        sha, _, _, state = self.deployment_fixture()
+        good = dict(schema_version=1, release="releases/" + sha,
+                    source_commit="d" * 40, source_tree_sha256="e" * 64,
+                    test_report_sha256="f" * 64, accepted_at="2026-10-02T11:00:00Z",
+                    origin="activation")
+        invalid = [None, dict(good, schema_version=True), dict(good, release="releases/" + "0" * 64),
+                   dict(good, source_commit="invalid"), dict(good, test_report_sha256="missing"),
+                   dict(good, accepted_at="2026-10-02T11:00:00"), dict(good, origin="unknown")]
+        record = json.loads(state.read_text())
+        for receipt in invalid:
+            with self.subTest(receipt=receipt):
+                record["current_acceptance"] = receipt
+                state.write_text(json.dumps(record))
+                with self.assertRaises((ValueError, TypeError)):
+                    CHECKS.inspect_deployment(self.root)
+
+    def test_legacy_acceptance_requires_original_report_hash_and_time(self):
+        _, _, manifest, _ = self.deployment_fixture()
+        result = CHECKS.inspect_deployment(self.root)
+        self.assertEqual(result["acceptance_origin"], "legacy_manifest")
+        self.assertEqual(result["accepted_source_commit"], "a" * 40)
+        record = json.loads(manifest.read_text())
+        record.pop("test_report_sha256")
+        manifest.write_text(json.dumps(record))
         with self.assertRaises(ValueError):
             CHECKS.inspect_deployment(self.root)
 

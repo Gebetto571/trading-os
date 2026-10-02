@@ -68,9 +68,13 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
+          version: "0.12.22"
           python-version: "3.12.14"
+          enable-cache: false
+      - name: Install the same Python distribution as Mac mini
+        run: uv python install 3.12.14
       - uses: dtolnay/rust-toolchain@1.88.0
         with:
           components: rustfmt, clippy
@@ -82,9 +86,9 @@ jobs:
             bash -n "$script"
           done
       - name: Readiness, environment, test isolation, and backup failure cases
-        run: python -m unittest discover -s tests -p test_system_operations.py -v
+        run: uv run --no-project --python 3.12.14 python -m unittest discover -s tests -p test_system_operations.py -v
       - name: Setup preservation, activation, and rollback failure cases
-        run: python -m unittest discover -s tests -p test_machine_setup.py -v
+        run: uv run --no-project --python 3.12.14 python -m unittest discover -s tests -p test_machine_setup.py -v
       - name: Compile native market-data binary
         run: cargo build --package trading-os-market-data --bin market-data-import --locked
       - name: Native command smoke without database or secrets

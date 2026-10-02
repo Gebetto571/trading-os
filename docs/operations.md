@@ -75,7 +75,10 @@ research/engine/.venv/bin/python scripts/check-system.py
 altındadır; `active.json` current/previous durumunu tek atomik işlemle seçer.
 Geliştirme çıktısının silinmesi veya yeniden derlenmesi kabul edilmiş ikiliyi
 değiştirmez. Çalıştırıcının SHA-256 özeti ve test raporu etkinleştirmede denetlenir.
-Önceki sürüme dönüş: `scripts/deploy-market-data.sh rollback`.
+Aynı ikili yeniden kabul edildiğinde `active.json` içindeki ayrı kabul kaydı yeni
+kaynak ve test kimliğini taşır; ikilinin ilk derleme manifesti değişmez.
+Önceki sürüme dönüş: `scripts/deploy-market-data.sh rollback`; ilk kurulumda
+henüz önceki bir sürüm yoksa dönüş reddedilir.
 
 Son durum kullanıcı runtime alanındaki `health/latest.json`, tarihçe özel izinli
 `health/history.jsonl` dosyasındadır. Eski repo-içi kayıtlar tarihsel kanıttır.
@@ -118,3 +121,52 @@ H1 önceki görevde tamamlandı. D1, kanonik değerlendirme corpus'u ve hesap y�
 MacBook eşitlemesi devir sırasında durdurulmuştur. Mac mini eşitlemesinin son etkinlik ve kabul durumu `migration-result.json` içindedir; iki makinede eşzamanlı çalıştırılmaz. Geri dönüş gerekirse önce Mac mini eşitlemesi durdurulur, sonra korunmuş MacBook kaynağı yeniden etkinleştirilir.
 
 Kabul sonucu: 1.776 dosya birebir doğrulandı; beş SQLite bütünlük kontrolü, 148 Python ve 114 Rust testi geçti. PostgreSQL’deki dört tablonun içeriği geri yükleme sonrasında kaynakla birebir eşleşti. Mac mini’de ilk otomatik eşitleme başarıyla tamamlandı: 32.946 yeni mum kaydı, sıfır kalan boşluk. MacBook eşitlemesi kalıcı olarak devre dışı; Mac mini zamanlaması 900 saniyedir. Kaynak proje ve eski yedekler korunmuştur.
+
+## 2026-10-02 güvenilir kurulum ve kurtarma
+
+24 Eylül'den beri kapalı PostgreSQL, mevcut volume korunarak açıldı. Kurtarma
+öncesi ve yeni yedekler farklı PostgreSQL container'larına geri yüklendi; dört
+tablonun sıralı tam içeriği SHA-256 bakımından birebir eşleşti. SQLite backup API
+ve bütünlük kontrolü geçti. MacBook'taki şifreli paket kaynak dosya özetleriyle
+karşılaştırıldı; bu ikinci fiziksel cihaz kopyasıdır.
+
+İlk kabul `b1948f6` kaynağında 141 kök Python, 80 araştırma ve 114 Rust testini
+ayrı veritabanında geçirdi; test container'ı kaldırıldı. Aktif ikili SHA-256
+`e593ff2fd5537d1465d450e5bcfe811ff0f75ee99fc58747847e6bba085caf01`.
+Sonraki kabulün tam kaynak ve test kimliği `active.json` kabul kaydından okunur;
+bu tarihsel ilk kabul yeni sürüm testi olarak kullanılamaz.
+
+Docker Desktop kontrollü yeniden başlatıldı; PostgreSQL `unless-stopped` ile
+aynı volume üzerinde otomatik açıldı. `target/release/market-data-import` geçici
+olarak kaldırıldığında da kabul edilmiş runtime ikilisi veri toplamayı sürdürdü.
+Ardından sağlık kontrolü PASS verdi. Bu Docker yeniden başlatma kanıtıdır;
+macOS'un fiziksel yeniden başlatılması sınanmamıştır.
+
+Kurtarma kanıtları `/Users/m2pro/Projects/.trading-os-reliability-20261002/` altında:
+`full-test.json`, `readiness-after-restart.json`, `runtime-recovery-verification.json`,
+`restore-verification.json`, `final-restore-verification.json`, `d1-method.json`,
+`d1-result.json`, `d1-result-repeat.json`, `d1-corpus-provenance.json`.
+GitHub'daki `Required quality gate` ayrı kabul kapısıdır; yerel PASS GitHub PASS
+yerine geçmez. Uzak `main` ile mevcut geliştirme geçmişi bütünleştirilmiştir;
+son uzak kabul pull request ve CI durumundan doğrulanır.
+
+D1 sabit yöntem ve gerçek 17.544 mumla iki kez aynı sonucu verdi. Uygulama
+başarılı, impulse stratejisi REJECT'tir. Bu araştırma gerçek portföy getirisi,
+H1 terfisi veya PAPER/LIVE izni değildir. Sonuç görülünce yöntem ayarlanmaz.
+
+Codex projenin `.codex/environments/environment.toml` dosyasından dört macOS
+eylemini okur: Durumu göster, Hızlı test, Tam test, Yedek al. Yeni çalışma ağacı
+kurulumu yalnız doğrulanmış Python bağımlılıklarını hazırlar; kullanıcı ayarlarını,
+veriyi, çalışan sürümü veya zamanlayıcıyı taşımaz. Tam test kendi ayrı veritabanını
+kullanır. Yedek al mantıksal yerel arşiv üretir; başka cihaz ve gerçek geri yükleme
+kabulü ayrıca yapılır. Biçim, kurulu uygulamanın şemasından kontrol edilmiştir;
+düğmelerin arayüzde görünmesi ayrıca kullanıcı oturumuna bağlıdır. Boş çalışma
+klasöründe kurulum sınandı; ana `.env`, LaunchAgent ve aktif sürüm kaydı değişmedi.
+Resmî kullanım: [Codex yerel ortamları](https://learn.chatgpt.com/docs/environments/local-environment).
+
+Mac mini Git kimliği doğrulanmış GitHub noreply adresidir. Makinede yalnız bu
+repo için SSH erişim anahtarı oluşturuldu; kişisel hesabın geniş erişimli tokenı
+kopyalanmadı. GitHub host anahtarları resmî HTTPS meta yanıtından sabitlendi;
+uzak kaynak okuma ve yazma dry-run geçti. Repo-özel `core.sshCommand` anahtarı
+kullanır; özel anahtar Git dışında `~/.ssh/` altında yalnız kullanıcı izinlidir.
+Anahtar GitHub depo ayarından iptal edilebilir; main kalite koruması korunur.

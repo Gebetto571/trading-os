@@ -180,7 +180,30 @@ def inspect_deployment(runtime):
             or not re.fullmatch(r"[a-f0-9]{40}", str(manifest.get("source_commit", "")))
             or not re.fullmatch(r"[a-f0-9]{64}", str(manifest.get("source_tree_sha256", "")))):
         raise ValueError("deployment acceptance or hash mismatch")
-    return {"binary_sha256": actual, "source_commit": manifest.get("source_commit")}
+    if "current_acceptance" in active:
+        acceptance = active["current_acceptance"]
+    else:
+        # A legacy state carries the original acceptance, never a fabricated new one.
+        acceptance = {"schema_version": 1, "release": relative,
+                      "source_commit": manifest.get("source_commit"),
+                      "source_tree_sha256": manifest.get("source_tree_sha256"),
+                      "test_report_sha256": manifest.get("test_report_sha256"),
+                      "accepted_at": manifest.get("created_at"), "origin": "legacy_manifest"}
+    if (not isinstance(acceptance, dict) or type(acceptance.get("schema_version")) is not int
+            or acceptance.get("schema_version") != 1
+            or acceptance.get("release") != relative
+            or acceptance.get("origin") not in {"activation", "legacy_manifest"}
+            or not re.fullmatch(r"[a-f0-9]{40}", str(acceptance.get("source_commit", "")))
+            or not re.fullmatch(r"[a-f0-9]{64}", str(acceptance.get("source_tree_sha256", "")))
+            or not re.fullmatch(r"[a-f0-9]{64}", str(acceptance.get("test_report_sha256", "")))):
+        raise ValueError("deployment acceptance receipt invalid")
+    timestamp(acceptance.get("accepted_at"))
+    return {"binary_sha256": actual, "binary_source_commit": manifest["source_commit"],
+            "accepted_source_commit": acceptance["source_commit"],
+            "source_commit": acceptance["source_commit"],
+            "accepted_source_tree_sha256": acceptance["source_tree_sha256"],
+            "accepted_test_report_sha256": acceptance["test_report_sha256"],
+            "accepted_at": acceptance["accepted_at"], "acceptance_origin": acceptance["origin"]}
 
 
 def readiness(root, max_age=1800, health_directory=None):

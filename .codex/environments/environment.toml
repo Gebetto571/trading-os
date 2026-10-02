@@ -1,0 +1,58 @@
+version = 1
+name = "Trading OS"
+
+[setup]
+script = ""
+
+[setup.darwin]
+script = '''
+set -euo pipefail
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:$PATH"
+uv python install 3.12.14
+if [[ ! -e research/engine/.venv ]]; then
+  uv venv --python 3.12.14 research/engine/.venv
+fi
+research/engine/.venv/bin/python -c 'import platform; assert platform.python_version() == "3.12.14"'
+uv pip install --python research/engine/.venv/bin/python -r research/engine/requirements.txt jsonschema==4.23.0
+'''
+
+[[actions]]
+name = "Durumu göster"
+icon = "debug"
+platform = "darwin"
+command = '''
+set -euo pipefail
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:$PATH"
+research/engine/.venv/bin/python scripts/check-system.py
+'''
+
+[[actions]]
+name = "Hızlı test"
+icon = "test"
+platform = "darwin"
+command = '''
+set -euo pipefail
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:$PATH"
+research/engine/.venv/bin/python -m unittest discover -s tests
+research/engine/.venv/bin/python -m unittest discover -s research/engine/tests
+'''
+
+[[actions]]
+name = "Tam test"
+icon = "test"
+platform = "darwin"
+command = '''
+set -euo pipefail
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:$PATH"
+env -u DATABASE_URL scripts/test-project.sh
+'''
+
+[[actions]]
+name = "Yedek al"
+icon = "tool"
+platform = "darwin"
+command = '''
+set -euo pipefail
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:$PATH"
+scripts/backup-database.sh
+'''
