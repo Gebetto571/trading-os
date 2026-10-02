@@ -2,9 +2,9 @@
 id: TOS-DEC-004
 title: Merkezi Dosya Yönetim Anayasası
 status: sealed
-version: 2.1
+version: 2.2
 date: 2026-08-03
-last_updated: 2026-08-21
+last_updated: 2026-10-02
 authority: project-constitution
 scope:
   - all-chats
@@ -423,7 +423,7 @@ MD-004 kimliği anayasa öncesi kökenli tarihsel bir karardır; mevcut TOS-DEC-
 | MD-023 | `CURRENT.md` | `docs/status/` | docs-manager / all-chats | Tekil güncel durum | Yaşayan durum kaydı | active / main | `709e3c6` | 2026-08-03 / 2026-08-04 | MD-024 |
 | MD-024 | `2026-08-03-btcusdt-data-integrity.md` | `docs/reports/` | docs-manager / cloud-planner,codex-dev | BTCUSDT bütünlük kanıtı | Bağımsız doğrulama raporu | active / main | `main@3d5f0bc` | 2026-08-03 / 2026-08-03 | MD-010, MD-015, MD-023 |
 | MD-025 | `sources/` Markdown grubu | `sources/` | external-sync / all-chats | Salt okunur kaynak aynası | Dış sistem eşitlemesi | reference / external-sync | not-applicable | legacy-unknown / 2026-08-21 | MD-004 |
-| MD-026 | `TOS-DEC-005__exact-scope-allocation__v1.0.md` | `docs/decisions/system/` | docs-manager / chief-engineer/00,engine/01,test-risk/04 | TOS-PACK-20260806-001 için on exact execution-core path'in tekil teknik sahipliği | Genel klasör sahipliği, ortak contract ile lane sınırlarını dosya bazında çözmez | accepted record / historical preparation-only | not-applicable | 2026-08-09 / 2026-10-02 | header status=accepted; does not activate pack, claims or implementation; MD-007 |
+| MD-026 | `TOS-DEC-005__exact-scope-allocation__v1.0.md` | `docs/decisions/system/` | docs-manager / chief-engineer/00,engine/01,test-risk/04 | TOS-PACK-20260806-001 için on exact execution-core path'in tekil teknik sahipliği | Genel klasör sahipliği, ortak contract ile lane sınırlarını dosya bazında çözmez | proposed / branch-only | not-applicable | 2026-08-09 / 2026-10-02 | header accepted is historical record; current activation remains proposed and grants no implementation authority; MD-007 |
 | MD-027 | `TOS-MASTER-BLUEPRINT.md` v1.1 | Drive `03_KARARLAR/03_BAGLI_BELGELER/` | docs-manager / cloud-planner,codex-dev,chief-engineer | BTCUSDT spot ilk ürün/adaptör; price-action araştırması; XAU ve margin karar kapıları | Ayrı yaşayan ana mimari uygulama kaynağı | active / external-sync | not-applicable | 2026-08-08 / 2026-08-21 | MD-004, MD-014, MD-015, MD-028–MD-030 |
 | MD-028 | `TOS-TASK-TREE.md` v1.2 | Drive `03_KARARLAR/03_BAGLI_BELGELER/` | docs-manager / chief-engineer,codex-dev,cloud-planner | Küçük, bağımlı ve test edilebilir görev ağacı; XAU disposition kapısı | Ayrı görev topolojisi ve uygulama kabul kaynağı | active / external-sync | not-applicable | 2026-08-08 / 2026-08-21 | MD-027, MD-029, MD-030 |
 | MD-029 | `TOS-ROADMAP.md` v1.1 | Drive `03_KARARLAR/03_BAGLI_BELGELER/` | docs-manager / chief-engineer,codex-dev,cloud-planner | Faz, kritik yol ve BTCUSDT spot → XAU kararı → isolated-margin ilerleme sırası | Görev ayrıntısından bağımsız yönetilebilir faz ve karar kapısı kaynağı | active / external-sync | not-applicable | 2026-08-08 / 2026-08-21 | MD-027, MD-028, MD-030 |
@@ -447,6 +447,7 @@ Değişiklik için:
 
 | Tarih | Sürüm | Değişiklik | Onay |
 |---|---:|---|---|
+| 2026-10-02 | 2.2 | Mac mini kanonik devir notu korundu; MD-026 tarihsel accepted başlığı ile yürürlükteki proposed/branch-only uygulama sınırı açıklığa kavuşturuldu; GitHub belge bildirim kuralları korundu. | Kullanıcının tam yetkili sağlamlaştırma talimatı |
 | 2026-08-21 | 2.1 | MD-004/MD-025 dış kaynak ve salt-okunur ayna sahipliğiyle birleştirildi; MD-026 önceki açık kullanıcı kararına uygun proposed/branch-only tutuldu; Blueprint, Task Tree, Roadmap ve Packs MD-027–MD-030 olarak external-sync kaydedildi; yerine geçen Ar-Ge raporu MD-031 olarak kapatıldı. | Kullanıcının açık hizalama talimatı ve belge/anlam denetimi |
 | 2026-08-08 | 2.0 | BTCUSDT spot master blueprint, task-tree, roadmap ve Chief Engineer pack belgeleri ilk kez merkezi fihriste alındı; kaldırılan eski kapsam tarihsel/superseded duruma geçirildi. | Kullanıcının master-plan ve kapsam talimatı |
 | 2026-08-04 | 1.9 | Her yeni dosya için docs-manager bildirimi ve yalnız kullanıcı “belgeleri senkron et” dediğinde çalışan sade belge uyum akışı eklendi. | Kullanıcı talimatı |
