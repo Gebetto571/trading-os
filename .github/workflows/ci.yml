@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16.15-alpine
         env:
           POSTGRES_USER: trading_os_test
           POSTGRES_PASSWORD: trading_os_test
@@ -53,7 +53,7 @@ jobs:
       DATABASE_URL: postgres://trading_os_test:trading_os_test@localhost:5432/trading_os_test
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.88.0
         with:
           components: rustfmt, clippy
       - name: Format
@@ -63,16 +63,45 @@ jobs:
       - name: Tests
         run: cargo test --workspace --all-targets --all-features --locked
 
+  macos:
+    name: Mac mini ARM64 safety smoke
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.14"
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt, clippy
+      - name: Require native Apple Silicon
+        run: test "$(uname -m)" = arm64
+      - name: Check shell entry points
+        run: |
+          for script in scripts/*.sh scripts/lib/*.sh; do
+            bash -n "$script"
+          done
+      - name: Readiness, environment, test isolation, and backup failure cases
+        run: python -m unittest discover -s tests -p test_system_operations.py -v
+      - name: Setup preservation, activation, and rollback failure cases
+        run: python -m unittest discover -s tests -p test_machine_setup.py -v
+      - name: Compile native market-data binary
+        run: cargo build --package trading-os-market-data --bin market-data-import --locked
+      - name: Native command smoke without database or secrets
+        run: target/debug/market-data-import --help
+
   quality:
     name: Required quality gate
     if: always()
-    needs: [python, rust]
+    needs: [python, rust, macos]
     runs-on: ubuntu-latest
     steps:
       - name: Require every gate
         env:
           PYTHON_RESULT: ${{ needs.python.result }}
           RUST_RESULT: ${{ needs.rust.result }}
+          MACOS_RESULT: ${{ needs.macos.result }}
         run: |
           test "$PYTHON_RESULT" = success
           test "$RUST_RESULT" = success
+          test "$MACOS_RESULT" = success

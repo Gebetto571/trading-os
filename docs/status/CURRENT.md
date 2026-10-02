@@ -1,4 +1,43 @@
-# Güncel durum — 2026-08-21
+# Güncel durum — 2026-10-02
+
+## Devam için önce bu bölüm okunur
+
+- Kanonik çalışma klasörü `/Users/m2pro/Projects/trading-os`; MacBook kaynak
+  kopyası tarihsel ve korunmuş durumdadır. `sources/` değiştirilmez.
+- PostgreSQL'in 2026-09-24 kesintisi giderildi; 2026-10-02 veri toplama yeniden
+  başarılı oldu. İlk kurtarma çalışması 11.571 mum ekledi ve sıfır boşluk bildirdi.
+  Bu tarihli kanıttır; her yeni oturumda `check-system.py` güncel sağlık ve veri
+  yaşını salt okunur denetler.
+- Dört PostgreSQL tablosunun içeriği ayrı geri yükleme veritabanıyla SHA-256
+  bakımından eşleşti. SQLite yedeği sağlam; başka fiziksel cihazdaki şifreli
+  kurtarma paketi şifre açma ve kaynak dosya karşılaştırmasından geçti.
+- H1 lineage daha önce tamamlandı. R1→C0 sözleşmesi ve ağsız replay uygulanmıştır;
+  aşağıdaki 2026-08-20 P1 maddesi tarihsel tasarım notudur.
+- D1 gerçek çıktı hesaplama yolu `research_engine.d1` ile eklendi. Mühürlü 24 aylık
+  2024–2025 BTCUSDT 1h corpus'u, 17.544 mum ve 17 veri alanıyla kanonik PostgreSQL
+  içeriğine eşleşti. Önceden sabitlenen dört aday, chronological fold/holdout,
+  20 CSCV, PBO, koşullu işaret testi, rejim, komşu ve iki kat maliyet stresi
+  gerçek fiyatlardan hesaplandı. Yeni impulse ailesinin sonucu **REJECT**:
+  örnek kapsamı ve PBO geçse de fold, rejim, komşu, anlamlılık ve maliyet stresi
+  geçmedi. Mühendislik kabulü strateji kabulü değildir; H1 registry terfisi veya
+  reusable C3 aktarımı yapılmış sayılmaz. PAPER, LIVE_CANARY ve LIVE kapalıdır.
+- İlk gerçek çalışmanın yöntem SHA-256 değeri
+  `36095f85511d4ac20ecd11f240ca4fd191917617543926cd24a333ca7343c73a`, snapshot
+  kimliği `087ba8552325a93ee68414015928da6b155dd03cd67b1be38b5e8a987418bb6a`.
+  Kanıtlar `/Users/m2pro/Projects/.trading-os-reliability-20261002/` altındadır;
+  ham veri ve sonuçlar Git'e gönderilmez. Yöntem, sonuç görüldükten sonra ayarlanmaz.
+- Kurulum, sürüm etkinleştirme, ayrı veritabanında tam test ve yedek komutları
+  `docs/operations.md` içindedir. Rutin geliştirme çalışan ikiliyi değiştirmez.
+  Bütün çalışma diliminin test, etkinleştirme ve GitHub kabulü aynı operasyon
+  belgesindeki tarihli son kayıttan ve güncel sağlık kontrolünden okunur.
+
+Sıradaki araştırma işi, reddedilmiş yöntem üzerinde eşikleri oynatmak değildir.
+Yeni bir hipotez gerekiyorsa tek görev, açık kabul ölçütü ve sonuç görülmeden
+belirlenmiş ayrı değerlendirme dönemiyle başlatılır. Önceki 102 görevli workgraph
+tarihsel provenance olarak korunur; bütün ağaç her görevde yeniden açılmaz.
+
+Aşağıdaki kayıtlar kendi tarihlerindeki kanıtlardır; bugünkü makine sağlığı veya
+test sayısı olarak kullanılmaz.
 
 ## Yerleşim ve yönetişim
 
@@ -83,7 +122,7 @@ gerektirir. Sonraki dış kaynak eşitlemesinde `0.2` metni korunmalı; kaynak y
 Bu temizlikte kod, CI veya performans optimizasyonu uygulanmadı. Ayrı backlog:
 
 - P0: Research Engine testleri ve bağımlılığı CI kalite kapısında mevcut; bağımlılık kilitleme, fixture kapsamı ve quality-job zorunluluğu düzenli korunmalı.
-- P1: Salt okunur veri snapshot’ı → research sonucu → normalize PAPER/REPLAY girdisi için sürümlü sözleşme tasarlamak; canlı adaptör eklememek.
+- P1 (tarihsel; R1/C0 ile tamamlandı): Salt okunur veri snapshot’ı → research sonucu → normalize replay girdisi için sürümlü sözleşme; canlı adaptör içermez.
 - P2: Execution-core büyük durumlarda kopyalama, hash ve açık emir taraması için release ölçümleri (1k/10k/100k) eklemek; eşik aşılmadan refactor yapmamak.
 - P3: Market-data arşiv/CSV ve research tablo yükleri için veri boyutu, tepe bellek ve telemetri bütçelerini ölçmek.
 - P4/P5: İşletim betikleri/compose taşınabilirlik kontrolleri ile research SQLite eşzamanlılığı ve Rust MSRV değerlendirmesini ihtiyaç halinde açmak.

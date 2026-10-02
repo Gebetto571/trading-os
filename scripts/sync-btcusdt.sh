@@ -1,51 +1,67 @@
 #!/bin/bash
 set -euo pipefail
+umask 077
 
-readonly REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly RELEASE_BINARY="${REPOSITORY_ROOT}/target/release/market-data-import"
-readonly ENVIRONMENT_FILE="${REPOSITORY_ROOT}/.env"
-readonly HEALTH_DIRECTORY="${TRADING_OS_MARKET_DATA_HEALTH_DIR:-${REPOSITORY_ROOT}/data/health/btcusdt}"
-
-publish_boot_failure() {
-    local message="$1"
-    local observed_at
-    local record
-    local temporary
-    observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    record="{\"schema_version\":1,\"observed_at\":\"${observed_at}\",\"status\":\"failed\",\"database_reachable\":false,\"symbol\":\"BTCUSDT\",\"rows_fetched\":0,\"rows_inserted\":0,\"rows_repaired\":0,\"gaps_remaining\":0,\"partitions_verified\":0,\"duration_ms\":0,\"error\":\"${message}\"}"
-    umask 077
-    mkdir -p "${HEALTH_DIRECTORY}"
-    chmod 700 "${HEALTH_DIRECTORY}"
-    temporary="$(mktemp "${HEALTH_DIRECTORY}/.latest.json.XXXXXX.part")"
-    printf '%s\n' "${record}" >"${temporary}"
-    chmod 600 "${temporary}"
-    mv -f "${temporary}" "${HEALTH_DIRECTORY}/latest.json"
-    printf '%s\n' "${record}" >>"${HEALTH_DIRECTORY}/history.jsonl"
-    chmod 600 "${HEALTH_DIRECTORY}/history.jsonl"
-    printf '%s\n' "${record}"
+# Establish a safe failure channel before reading config or any helper.
+TOS_RUNTIME_ROOT="${TRADING_OS_RUNTIME_ROOT:-${HOME}/Library/Application Support/TradingOS/market-data}"
+TOS_HEALTH_DIRECTORY="${TRADING_OS_MARKET_DATA_HEALTH_DIR:-${TOS_RUNTIME_ROOT}/health}"
+failure_code=boot_failed
+child_pid=""
+boot_failure() {
+    if declare -F tos_health_failure >/dev/null; then
+        tos_health_failure "${failure_code}" 2>/dev/null || true
+    else
+        local record temporary
+        record="{\"schema_version\":1,\"observed_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"failed\",\"database_reachable\":false,\"symbol\":\"BTCUSDT\",\"error\":\"boot_failed\"}"
+        if [[ ! -L "${TOS_HEALTH_DIRECTORY}" ]] && mkdir -p "${TOS_HEALTH_DIRECTORY}" 2>/dev/null; then
+            temporary="$(mktemp "${TOS_HEALTH_DIRECTORY}/.latest.json.XXXXXX")" || return 0
+            printf '%s\n' "${record}" >"${temporary}"
+            chmod 600 "${temporary}"
+            mv -f "${temporary}" "${TOS_HEALTH_DIRECTORY}/latest.json"
+        fi
+        printf '%s\n' "${record}"
+    fi
 }
+finish() {
+    local result=$?
+    trap - EXIT
+    if [[ "${result}" -ne 0 ]]; then boot_failure; fi
+    exit "${result}"
+}
+stop() {
+    failure_code=collector_interrupted
+    if [[ -n "${child_pid}" ]]; then kill -TERM "${child_pid}" 2>/dev/null || true; fi
+    exit 143
+}
+trap finish EXIT
+trap stop TERM INT
 
-cd "${REPOSITORY_ROOT}"
-
-if [[ ! -x "${RELEASE_BINARY}" ]]; then
-    publish_boot_failure "release binary unavailable"
-    exit 69
-fi
-
-if [[ -r "${ENVIRONMENT_FILE}" ]]; then
-    set -a
-    # shellcheck disable=SC1090
-    source "${ENVIRONMENT_FILE}" >/dev/null
-    set +a
-fi
-
+repository="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+# shellcheck source=scripts/lib/market-data.sh
+source "${repository}/scripts/lib/market-data.sh"
+tos_init "${repository}"
+failure_code=environment_rejected
+tos_load_env >/dev/null 2>&1
+tos_python_action validate-env >/dev/null 2>&1
+failure_code=release_unavailable
+binary="$(tos_release_path)" 2>/dev/null
+failure_code=working_directory_unavailable
+cd "${TOS_REPOSITORY_ROOT}"
 export RUST_LOG="${RUST_LOG:-warn}"
-export TRADING_OS_MARKET_DATA_HEALTH_DIR="${HEALTH_DIRECTORY}"
+export TRADING_OS_MARKET_DATA_HEALTH_DIR="${TOS_HEALTH_DIRECTORY}"
+started="$(date +%s)"
+failure_code=collector_failed
 
-exec "${RELEASE_BINARY}" sync \
-    --symbol BTCUSDT \
-    --interval 1m \
-    --start 2023-08-03T00:00:00Z \
-    --end latest-closed \
-    --parquet-root "${REPOSITORY_ROOT}/data/parquet" \
-    --cache-root "${REPOSITORY_ROOT}/data/cache"
+# Raw executable diagnostics may contain database credentials. Health JSON is
+# the supported diagnostic channel; stdout/stderr are never persisted here.
+"${binary}" sync --symbol BTCUSDT --interval 1m \
+    --start 2023-08-03T00:00:00Z --end latest-closed \
+    --parquet-root "${TOS_REPOSITORY_ROOT}/data/parquet" \
+    --cache-root "${TOS_REPOSITORY_ROOT}/data/cache" \
+    --health-root "${TOS_HEALTH_DIRECTORY}" >/dev/null 2>&1 &
+child_pid=$!
+wait "${child_pid}"
+child_pid=""
+failure_code=health_record_unavailable
+tos_python_action validate-health "${started}" >/dev/null 2>&1
+printf '%s\n' 'Market-data attempt completed; health record updated.'

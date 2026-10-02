@@ -59,19 +59,51 @@ Yerel görev `com.tradingos.market-data.btcusdt-sync` etiketiyle 15 dakikada bir
 başlatmaz; servis kapalıysa başarısız sağlık kaydı bırakır ve sonraki zamanlamayı
 bekler. Mac uyandığında kanonik PostgreSQL watermark'ından devam eder.
 
-Kurulumdan önce release binary üretilir ve plist kullanıcı alanına kopyalanır:
+Kurulum mevcut ayarları korur; kullanıcı yollarını LaunchAgent şablonundan
+üretir. Derleme, ayrı veritabanındaki test ve etkinleştirme üç ayrı adımdır:
 
 ```bash
-cargo build --release -p trading-os-market-data --bin market-data-import
-cp ops/launchd/com.tradingos.market-data.btcusdt-sync.plist \
-  /Users/m2pro/Library/LaunchAgents/
-launchctl bootstrap gui/$(id -u) \
-  /Users/m2pro/Library/LaunchAgents/com.tradingos.market-data.btcusdt-sync.plist
+scripts/setup-mac-mini.sh
+scripts/deploy-market-data.sh build
+scripts/test-project.sh
+scripts/deploy-market-data.sh activate --report target/test-project/latest.json
+scripts/setup-mac-mini.sh --config-only --activate-agent
+research/engine/.venv/bin/python scripts/check-system.py
 ```
 
-Son durum `data/health/btcusdt/latest.json`, tarihçe ise izinleri `0600` olan
-`history.jsonl` üzerinden okunur. Loglar
-`/Users/m2pro/Library/Logs/trading-os-btcusdt-sync.log` konumundadır.
+Çalışan sürüm `~/Library/Application Support/TradingOS/market-data/releases/`
+altındadır; `active.json` current/previous durumunu tek atomik işlemle seçer.
+Geliştirme çıktısının silinmesi veya yeniden derlenmesi kabul edilmiş ikiliyi
+değiştirmez. Çalıştırıcının SHA-256 özeti ve test raporu etkinleştirmede denetlenir.
+Önceki sürüme dönüş: `scripts/deploy-market-data.sh rollback`.
+
+Son durum kullanıcı runtime alanındaki `health/latest.json`, tarihçe özel izinli
+`health/history.jsonl` dosyasındadır. Eski repo-içi kayıtlar tarihsel kanıttır.
+`check-system.py` son deneme ile son mumun yaşını da denetler; eski bir başarılı
+kaydı güncel sağlık saymaz. Docker PostgreSQL'i `unless-stopped` ile yeniden
+başlatır; ikinci bir host gözetmeni kullanılmaz. Docker Desktop'ın oturum açınca
+başlama ayarı ayrıca gerekir. Collector Docker veya veritabanını kendiliğinden
+başlatmaz. Bilgisayar uyurken çalışma garantisi yoktur; uyanınca kaldığı yerden
+tamamlar. Elle kapatılmış PostgreSQL, bu politika ile kendiliğinden açılmaz.
+
+Tam test `.env` yüklemez, mevcut `DATABASE_URL` değerini reddeder ve rastgele
+yerel port ile sahiplik etiketli geçici bir PostgreSQL kurar. Temizlik yalnız bu
+teste ait container içindir. Python ve Rust, container temizliği ve kaynak
+sürümü raporda birlikte doğrulanır. Kaynak değişirse eski rapor yeni sürümün
+etkinleştirilmesinde kullanılamaz.
+
+Yedek komutu `scripts/backup-database.sh --destination ~/TradingOSBackups`
+özel PostgreSQL arşivi, SHA-256, arşiv kataloğu ve manifest üretir. Manifest gerçek
+geri yüklemeyi `restore_verified=false`, başka disk durumunu doğrulanmamış olarak
+bırakır. Bunlar ancak ayrı kanıtla kabul edilir. SQLite için açık veritabanının
+salt okunur bağlantısından SQLite backup API kullanılır; WAL dosyasını tek başına
+kopyalamak yedek kabul edilmez. Başka cihaz paketi şifrelenir, anahtar Anahtarlıkta
+tutulur ve şifre açma sonrası kaynak dosya özetleri karşılaştırılır.
+
+Yeni görev için mevcut bu dosya ile `docs/status/CURRENT.md` okunur. Görev tek bir
+ölçülebilir sonuçla sınırlanır; önceki tarihsel planlar yeniden açılmaz. Kontrol
+komutu veri değişikliği yapmaz; sync, restore, deploy ve araştırma hesaplaması
+ayrı açık eylemlerdir.
 
 ## 2026-09-14 Mac mini devri
 

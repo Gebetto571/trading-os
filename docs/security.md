@@ -13,10 +13,18 @@
 
 ## Yerel sırlar
 
-- Sırlar yalnız `/Users/scm/Projects/trading-os` çalışma alanındaki Git dışı
+- Sırlar yalnız `/Users/m2pro/Projects/trading-os` çalışma alanındaki Git dışı
   `.env` veya işletim sistemi sır deposunda tutulur; proje kaynaklarına yazılmaz.
 - `.env` dosyası yalnız sahibi tarafından okunabilir olmalı; uygulama gevşek dosya
   izninde güvenli biçimde durmalıdır.
+- İşletim komutları `.env` dosyasını shell kodu olarak çalıştırmaz; yalnız izinli
+  anahtarları veri olarak okur. Normal dosya, mevcut kullanıcı sahipliği ve tam
+  `0600` izni gerekir; sembolik bağlantı, FIFO ve desteklenmeyen sözdizimi reddedilir.
+- Collector'ın ham stdout/stderr çıktısı saklanmaz; güvenli sağlık kaydı hata
+  kodunu taşır. Eski ya da başarısız kayıt sağlık kontrolünden geçmez.
+- Başka cihazdaki kurtarma paketi şifreli tutulur; Anahtarlık anahtarı Git'e,
+  manifestin içine veya günlük çıktısına yazılmaz. Anahtar erişimi olmadan paket
+  geri yüklenemez; yedek kabulünde şifre açma doğrulaması zorunludur.
 - Hata mesajları ve iletişim zarfları sır değerini yankılamaz.
 
 ## Dosya yolu ve bütünlük koruması
