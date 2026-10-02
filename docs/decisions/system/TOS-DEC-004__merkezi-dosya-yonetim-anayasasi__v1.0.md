@@ -22,6 +22,8 @@ supersedes_in_conflict:
 
 # Trading OS Merkezi Dosya Yönetim Anayasası
 
+> 2026-09-14 makine devri: Kullanıcının Trading OS’u Mac miniye taşıma talimatı kapsamında aktif yerel çalışma kökü `/Users/m2pro/Projects/trading-os` olmuştur. Bu belgedeki `/Users/scm/Projects/trading-os` atıfları korunmuş MacBook kaynak konumunu gösterir; Mac mini işlemlerinde yeni kök kullanılır. Diğer yetki, kapsam ve kaynak koruma kuralları değişmez.
+
 ## 1. Anayasal ilke
 
 Trading OS içinde yeni dosya oluşturmak istisnadır. Varsayılan işlem; uygun mevcut dosyayı bulmak, aynı dosyayı düzenlemek ve yeni bilgiyi açık tarihli bir bölüm olarak eklemektir.

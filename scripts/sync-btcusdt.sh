@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-readonly REPOSITORY_ROOT="/Users/scm/Projects/trading-os"
+readonly REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly RELEASE_BINARY="${REPOSITORY_ROOT}/target/release/market-data-import"
 readonly ENVIRONMENT_FILE="${REPOSITORY_ROOT}/.env"
 readonly HEALTH_DIRECTORY="${TRADING_OS_MARKET_DATA_HEALTH_DIR:-${REPOSITORY_ROOT}/data/health/btcusdt}"

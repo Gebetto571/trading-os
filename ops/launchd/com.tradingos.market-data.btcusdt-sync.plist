@@ -6,10 +6,10 @@
     <string>com.tradingos.market-data.btcusdt-sync</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/scm/Projects/trading-os/scripts/sync-btcusdt.sh</string>
+        <string>/Users/m2pro/Projects/trading-os/scripts/sync-btcusdt.sh</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/scm/Projects/trading-os</string>
+    <string>/Users/m2pro/Projects/trading-os</string>
     <key>RunAtLoad</key>
     <true/>
     <key>StartInterval</key>
@@ -21,8 +21,8 @@
     <key>LowPriorityIO</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/scm/Library/Logs/trading-os-btcusdt-sync.log</string>
+    <string>/Users/m2pro/Library/Logs/trading-os-btcusdt-sync.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/scm/Library/Logs/trading-os-btcusdt-sync.log</string>
+    <string>/Users/m2pro/Library/Logs/trading-os-btcusdt-sync.log</string>
 </dict>
 </plist>

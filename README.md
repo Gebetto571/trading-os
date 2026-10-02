@@ -4,7 +4,7 @@ Trading OS; araştırma, risk, yürütme ve yapay zekâ destekli denetim bileşe
 
 Trading OS üç sade katmanda çalışır:
 
-- **Yerel çalışma alanı:** `/Users/scm/Projects/trading-os`; kod, testler, SQLite
+- **Yerel çalışma alanı:** `/Users/m2pro/Projects/trading-os`; kod, testler, SQLite
   kayıtları ve hızlı geliştirme burada tutulur.
 - **GitHub:** Kodun ve kalıcı teknik belgelerin sürüm geçmişi ve uzak yedeği.
 - **Google Drive:** Yapay zekâ hafızası ve kullanıcı denetimli görev–sonuç

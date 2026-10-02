@@ -4,14 +4,14 @@
 
 | Konum | İşlev |
 |---|---|
-| `/Users/scm/Projects/trading-os` | Tek yerel kod, belge ve Git çalışma alanı |
+| `/Users/m2pro/Projects/trading-os` | Tek yerel kod, belge ve Git çalışma alanı |
 | Public GitHub `Gebetto571/trading-os` | Sürümlü uzak yedek ve inceleme/devir bağlantıları |
 | ChatGPT proje kaynağı | Kullanıcının açıkça eklediği bulut sohbet görev bağlamı |
 | `var/` | Git dışı yerel mesaj, arşiv, karantina ve veritabanı verileri |
 
 ## Git politikası
 
-- Ana ve tek yerel kod deposu `/Users/scm/Projects/trading-os` konumundadır;
+- Ana ve tek yerel kod deposu `/Users/m2pro/Projects/trading-os` konumundadır;
   standart `.git` metadata'sını kullanır ve public GitHub deposuna
   `origin` adıyla bağlıdır. Normal, etkileşimsiz Git komutları kullanılır.
 - Ana dal: `main`.
@@ -40,7 +40,7 @@ git log --oneline
 
 ## Yedekleme
 
-- Kod ve teknik belgeler: `/Users/scm/Projects/trading-os` + public GitHub deposu.
+- Kod ve teknik belgeler: `/Users/m2pro/Projects/trading-os` + public GitHub deposu.
 - SQLite: uygulama kapalıyken tarih damgalı şifreli yedek; GitHub'a gönderilmez.
 - Yerel karar/raporlar: Git üzerinden sürümlenir ve GitHub'a yedeklenir.
 
@@ -64,11 +64,25 @@ Kurulumdan önce release binary üretilir ve plist kullanıcı alanına kopyalan
 ```bash
 cargo build --release -p trading-os-market-data --bin market-data-import
 cp ops/launchd/com.tradingos.market-data.btcusdt-sync.plist \
-  /Users/scm/Library/LaunchAgents/
+  /Users/m2pro/Library/LaunchAgents/
 launchctl bootstrap gui/$(id -u) \
-  /Users/scm/Library/LaunchAgents/com.tradingos.market-data.btcusdt-sync.plist
+  /Users/m2pro/Library/LaunchAgents/com.tradingos.market-data.btcusdt-sync.plist
 ```
 
 Son durum `data/health/btcusdt/latest.json`, tarihçe ise izinleri `0600` olan
 `history.jsonl` üzerinden okunur. Loglar
-`/Users/scm/Library/Logs/trading-os-btcusdt-sync.log` konumundadır.
+`/Users/m2pro/Library/Logs/trading-os-btcusdt-sync.log` konumundadır.
+
+## 2026-09-14 Mac mini devri
+
+Aktif çalışma klasörü `/Users/m2pro/Projects/trading-os`; MacBook kaynak kopyası korunmuştur. Kaynak Git revizyonu `3c6416b703f9f468d1a60790f95992c832ac1908`, dal `preservation/pre-integration-20260821-8da4648`dir. Makine uyarlamaları henüz commit edilmemiştir. `sources/` salt okunur kalır.
+
+Aktarım ve test kanıtları `/Users/m2pro/Projects/.trading-os-migration-20260914` klasöründedir. Önce `transfer-verification.json` ve son `migration-result.json` okunur. Önceki görev bağlamı aynı klasörün `evidence/continuation.json` dosyasındadır; eski LCOS kayıtları `chatgpt-context/` altında tarihli referanstır ve kendiliğinden etkinleştirilmez.
+
+Geliştirme araçları Rust 1.88.0 (ARM64) ve Python 3.12dir. Terminal başlangıcında `source ~/.cargo/env` ile Rust araçları açılır. Araştırma ortamı `research/engine/.venv/bin/python` üzerinden kullanılır; köprü ve araştırma testleri de bu doğrulanmış ortamla çalıştırılabilir. Yeni `.env` örneği mevcut ayarların üstüne kopyalanmaz.
+
+H1 önceki görevde tamamlandı. D1, kanonik değerlendirme corpus'u ve hesap yöntemi kararı beklemektedir. Taşımanın tamamlanması bu eksikliği çözülmüş veya canlı işlem kapılarını açılmış saymaz.
+
+MacBook eşitlemesi devir sırasında durdurulmuştur. Mac mini eşitlemesinin son etkinlik ve kabul durumu `migration-result.json` içindedir; iki makinede eşzamanlı çalıştırılmaz. Geri dönüş gerekirse önce Mac mini eşitlemesi durdurulur, sonra korunmuş MacBook kaynağı yeniden etkinleştirilir.
+
+Kabul sonucu: 1.776 dosya birebir doğrulandı; beş SQLite bütünlük kontrolü, 148 Python ve 114 Rust testi geçti. PostgreSQL’deki dört tablonun içeriği geri yükleme sonrasında kaynakla birebir eşleşti. Mac mini’de ilk otomatik eşitleme başarıyla tamamlandı: 32.946 yeni mum kaydı, sıfır kalan boşluk. MacBook eşitlemesi kalıcı olarak devre dışı; Mac mini zamanlaması 900 saniyedir. Kaynak proje ve eski yedekler korunmuştur.
