@@ -6,44 +6,31 @@
   "additionalProperties": false,
   "required": ["schema_version", "id", "created_at", "sender", "recipient", "type", "subject", "body", "correlation_id", "artifacts", "metadata"],
   "properties": {
-    "schema_version": {"const": 1},
-    "id": {"type": "string", "format": "uuid"},
-    "created_at": {"type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$"},
+    "schema_version": {"type": "integer", "format": "trading-os-strict-integer", "const": 1},
+    "id": {"type": "string", "format": "trading-os-uuid"},
+    "created_at": {"type": "string", "minLength": 20, "maxLength": 32, "format": "trading-os-utc-z"},
     "sender": {"enum": ["orchestrator", "docs-manager", "cloud-planner", "codex-dev", "bridge-engineer", "operations-engineer", "governance-reviewer", "devils-advocate", "external-sync", "chatgpt", "codex-local", "chief-engineer"]},
     "recipient": {"enum": ["orchestrator", "docs-manager", "cloud-planner", "codex-dev", "bridge-engineer", "operations-engineer", "governance-reviewer", "devils-advocate", "external-sync", "chatgpt", "codex-local", "chief-engineer", "all-chats"]},
     "type": {"enum": ["task", "response", "decision", "status", "error"]},
     "subject": {"type": "string", "minLength": 1, "maxLength": 240},
-    "body": {"type": "string", "maxLength": 100000},
-    "correlation_id": {"type": ["string", "null"], "format": "uuid"},
+    "body": {"type": "string", "maxLength": 100000, "format": "trading-os-safe-body"},
+    "correlation_id": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "format": "trading-os-uuid"}
+      ]
+    },
     "artifacts": {
       "type": "array",
       "maxItems": 100,
       "items": {
         "oneOf": [
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["name", "uri", "sha256"],
-            "properties": {
-              "name": {"type": "string", "minLength": 1, "maxLength": 255},
-              "uri": {"type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^(file|https|git):"},
-              "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
-            }
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["kind", "name", "url"],
-            "properties": {
-              "kind": {"type": "string", "minLength": 1, "maxLength": 80},
-              "name": {"type": "string", "minLength": 1, "maxLength": 255},
-              "url": {"type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^https:"}
-            }
-          }
+          {"$ref": "#/$defs/local_artifact"},
+          {"$ref": "#/$defs/external_artifact"}
         ]
       }
     },
-    "metadata": {"type": "object"}
+    "metadata": {"$ref": "#/$defs/metadata"}
   },
   "allOf": [
     {
@@ -51,10 +38,14 @@
       "then": {"properties": {"type": {"enum": ["decision", "status"]}}}
     },
     {
+      "if": {"properties": {"metadata": {"$ref": "#/$defs/chief_trigger"}}, "required": ["metadata"]},
+      "then": {"properties": {"type": {"enum": ["task", "response", "status", "error"]}}}
+    },
+    {
       "if": {
         "properties": {
           "type": {"const": "task"},
-          "metadata": {"required": ["authority"]}
+          "metadata": {"$ref": "#/$defs/chief_trigger"}
         },
         "required": ["type", "metadata"]
       },
@@ -63,16 +54,16 @@
           "sender": {"const": "chatgpt"},
           "recipient": {"const": "codex-local"},
           "metadata": {
-            "type": "object",
-            "required": ["project_domain", "cloud_conversation_key", "local_lane", "authority", "approval_state", "change_mode", "implementation_brief"],
+            "required": ["change_mode", "implementation_brief"],
             "properties": {
-              "project_domain": {"enum": ["00", "01", "02", "03", "04", "05", "06", "07", "08"]},
-              "cloud_conversation_key": {"pattern": "^tos-cloud-0[0-8]$"},
-              "local_lane": {"pattern": "^chief-engineer/0[0-8]$"},
-              "authority": {"const": "chief-engineer"},
               "approval_state": {"const": "approved_for_local_implementation"},
               "change_mode": {"enum": ["FAST", "STANDARD", "STRICT"]},
-              "implementation_brief": {"type": "object"}
+              "implementation_brief": {
+                "oneOf": [
+                  {"$ref": "#/$defs/current_brief"},
+                  {"$ref": "#/$defs/legacy_brief"}
+                ]
+              }
             }
           }
         }
@@ -82,7 +73,7 @@
       "if": {
         "properties": {
           "type": {"enum": ["response", "status", "error"]},
-          "metadata": {"required": ["authority"]}
+          "metadata": {"$ref": "#/$defs/chief_trigger"}
         },
         "required": ["type", "metadata"]
       },
@@ -91,36 +82,150 @@
           "sender": {"const": "codex-local"},
           "recipient": {"const": "chatgpt"},
           "metadata": {
-            "type": "object",
-            "required": ["project_domain", "cloud_conversation_key", "local_lane", "authority", "approval_state", "result"],
-            "properties": {
-              "project_domain": {"enum": ["00", "01", "02", "03", "04", "05", "06", "07", "08"]},
-              "cloud_conversation_key": {"pattern": "^tos-cloud-0[0-8]$"},
-              "local_lane": {"pattern": "^chief-engineer/0[0-8]$"},
-              "authority": {"const": "chief-engineer"},
-              "result": {
-                "type": "object",
-                "required": ["verification_verdict", "changed_files", "commands", "git_state", "skipped_checks", "risks", "next_safe_step", "permission_state"],
-                "properties": {
-                  "verification_verdict": {"enum": ["ALIGNED", "CONDITIONAL", "BLOCKED"]},
-                  "permission_state": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["commit", "push", "merge", "deployment", "live_enablement"],
-                    "properties": {
-                      "commit": {"const": false},
-                      "push": {"const": false},
-                      "merge": {"const": false},
-                      "deployment": {"const": false},
-                      "live_enablement": {"const": false}
-                    }
-                  }
-                }
-              }
-            }
+            "required": ["result"],
+            "properties": {"result": {"$ref": "#/$defs/chief_result"}}
           }
         }
       }
     }
-  ]
+  ],
+  "$defs": {
+    "short_text": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "string_list": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {"$ref": "#/$defs/short_text"}
+    },
+    "local_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "uri", "sha256"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 255},
+        "uri": {"type": "string", "minLength": 1, "maxLength": 2048, "format": "trading-os-safe-uri"},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
+    "external_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "url"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1, "maxLength": 80},
+        "name": {"type": "string", "minLength": 1, "maxLength": 255},
+        "url": {"type": "string", "minLength": 1, "maxLength": 2048, "format": "trading-os-safe-uri"}
+      }
+    },
+    "chief_trigger": {
+      "anyOf": [
+        {"required": ["project_domain"]},
+        {"required": ["cloud_conversation_key"]},
+        {"required": ["local_lane"]},
+        {"required": ["authority"]},
+        {"required": ["approval_state"]}
+      ]
+    },
+    "chief_routes": {
+      "oneOf": [
+        {"properties": {"project_domain": {"const": "00"}, "cloud_conversation_key": {"const": "tos-cloud-00"}, "local_lane": {"const": "chief-engineer/00"}}},
+        {"properties": {"project_domain": {"const": "01"}, "cloud_conversation_key": {"const": "tos-cloud-01"}, "local_lane": {"const": "chief-engineer/01"}}},
+        {"properties": {"project_domain": {"const": "02"}, "cloud_conversation_key": {"const": "tos-cloud-02"}, "local_lane": {"const": "chief-engineer/02"}}},
+        {"properties": {"project_domain": {"const": "03"}, "cloud_conversation_key": {"const": "tos-cloud-03"}, "local_lane": {"const": "chief-engineer/03"}}},
+        {"properties": {"project_domain": {"const": "04"}, "cloud_conversation_key": {"const": "tos-cloud-04"}, "local_lane": {"const": "chief-engineer/04"}}},
+        {"properties": {"project_domain": {"const": "05"}, "cloud_conversation_key": {"const": "tos-cloud-05"}, "local_lane": {"const": "chief-engineer/05"}}},
+        {"properties": {"project_domain": {"const": "06"}, "cloud_conversation_key": {"const": "tos-cloud-06"}, "local_lane": {"const": "chief-engineer/06"}}},
+        {"properties": {"project_domain": {"const": "07"}, "cloud_conversation_key": {"const": "tos-cloud-07"}, "local_lane": {"const": "chief-engineer/07"}}},
+        {"properties": {"project_domain": {"const": "08"}, "cloud_conversation_key": {"const": "tos-cloud-08"}, "local_lane": {"const": "chief-engineer/08"}}}
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "format": "trading-os-safe-metadata",
+      "allOf": [
+        {
+          "if": {"$ref": "#/$defs/chief_trigger"},
+          "then": {
+            "required": ["project_domain", "cloud_conversation_key", "local_lane", "authority", "approval_state"],
+            "properties": {
+              "project_domain": {"enum": ["00", "01", "02", "03", "04", "05", "06", "07", "08"]},
+              "authority": {"const": "chief-engineer"}
+            },
+            "allOf": [{"$ref": "#/$defs/chief_routes"}]
+          }
+        }
+      ]
+    },
+    "current_brief": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "approved_logic", "in_scope", "non_goals", "acceptance_criteria", "required_tests", "risks", "stop_conditions"],
+      "properties": {
+        "outcome": {"$ref": "#/$defs/short_text"},
+        "approved_logic": {"$ref": "#/$defs/string_list"},
+        "in_scope": {"$ref": "#/$defs/string_list"},
+        "non_goals": {"$ref": "#/$defs/string_list"},
+        "acceptance_criteria": {"$ref": "#/$defs/string_list"},
+        "required_tests": {"$ref": "#/$defs/string_list"},
+        "risks": {"$ref": "#/$defs/string_list"},
+        "stop_conditions": {"$ref": "#/$defs/string_list"}
+      }
+    },
+    "legacy_brief": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "approved_logic", "in_scope", "non_goals", "acceptance_criteria", "required_tests", "risks", "stop_conditions", "invariants", "assumptions", "evidence_references"],
+      "properties": {
+        "outcome": {"$ref": "#/$defs/short_text"},
+        "approved_logic": {"$ref": "#/$defs/string_list"},
+        "in_scope": {"$ref": "#/$defs/string_list"},
+        "non_goals": {"$ref": "#/$defs/string_list"},
+        "acceptance_criteria": {"$ref": "#/$defs/string_list"},
+        "required_tests": {"$ref": "#/$defs/string_list"},
+        "risks": {"$ref": "#/$defs/string_list"},
+        "stop_conditions": {"$ref": "#/$defs/string_list"},
+        "invariants": {"$ref": "#/$defs/string_list"},
+        "assumptions": {"$ref": "#/$defs/string_list"},
+        "evidence_references": {"$ref": "#/$defs/string_list"}
+      }
+    },
+    "chief_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verification_verdict", "changed_files", "commands", "git_state", "skipped_checks", "risks", "next_safe_step", "permission_state"],
+      "properties": {
+        "verification_verdict": {"enum": ["ALIGNED", "CONDITIONAL", "BLOCKED"]},
+        "changed_files": {"$ref": "#/$defs/string_list"},
+        "commands": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command", "exit_code", "summary"],
+            "properties": {
+              "command": {"$ref": "#/$defs/short_text"},
+              "exit_code": {"type": "integer", "format": "trading-os-strict-integer"},
+              "summary": {"$ref": "#/$defs/short_text"}
+            }
+          }
+        },
+        "git_state": {"type": "object"},
+        "skipped_checks": {"$ref": "#/$defs/string_list"},
+        "risks": {"$ref": "#/$defs/string_list"},
+        "next_safe_step": {"$ref": "#/$defs/short_text"},
+        "permission_state": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["commit", "push", "merge", "deployment", "live_enablement"],
+          "properties": {
+            "commit": {"const": false},
+            "push": {"const": false},
+            "merge": {"const": false},
+            "deployment": {"const": false},
+            "live_enablement": {"const": false}
+          }
+        }
+      }
+    }
+  }
 }

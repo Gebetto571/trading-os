@@ -2,8 +2,8 @@
 id: TOS-DEC-001
 title: Trading OS Bot Çalışma Sistemi ve Kârlılık Disiplini
 status: accepted
-version: 0.1
-date: 2026-08-02
+version: 0.2
+date: 2026-08-20
 language: tr
 scope:
   - trading-engine
@@ -32,7 +32,7 @@ Amaç en fazla işlemi yapmak, yüksek kazanma oranı göstermek veya brüt kâr
 
 Amaç:
 
-1. Ücret, kayma, ters seçilim, fonlama, hedge, settlement ve sermaye kilitlenmesi sonrasında pozitif net beklenti bulmak.
+1. Ücret, kayma, ters seçilim, fonlama, hedge, takas, saklama ve sermaye kullanım maliyetleri sonrasında pozitif net beklenti bulmak.
 2. Sermayeyi aynı anda görülen fırsatlar içinde en iyi risk/getiri oranına sahip olanlara vermek.
 3. Tek bir kötü olayın veya teknik arızanın sistemi kalıcı olarak yaralamasını engellemek.
 4. Strateji avantajı zayıfladığında geçmiş kâra bağlanmadan küçülmek veya durmak.
@@ -78,7 +78,7 @@ Canlı karar hattı:
         → Risk Authority
         → Execution
         → Platform adaptörü
-        → Emir / fill / iptal / settlement
+        → Emir / fill / iptal / işlem sonrası hesap hareketi
         → Mutabakat ve P&L
 
 ### 4.1. Tek otoriteler
@@ -102,16 +102,15 @@ Canlı karar hattı:
 
 ### 4.3. Ortak çekirdek, farklı ürün kuralları
 
-İlk adaptör Polymarket’tir. Ortak çekirdek daha sonra kripto spot, kripto perpetual ve BIST/hisse ürünlerini taşıyabilmelidir.
+İlk aktif ürün ve ilk aktif adaptör kapsamı Binance Global BTCUSDT spot'tur. Adaptör yalnız public market data, private order/user stream, LIMIT GTC submit/cancel/query, balances, fills, reconnect/backfill ve rate-limit/error mapping sınırında kalır; strateji veya risk kuralı yazmaz. Price-action araştırması ve kanıt süreci ayrı strateji kartlarıyla yürütülür.
 
 | Ürün | Adaptör/ürün kuralında kalacak fark |
 |---|---|
-| Tahmin piyasası | Sonuç kontratı, azami ödeme/kayıp, resolution ve settlement |
-| Kripto spot | Base/quote rezervasyonu, 7/24 piyasa |
-| Kripto perpetual | Marjin, kaldıraç, fonlama, tasfiye |
-| BIST/hisse | Seans, lot/tick, fiyat sınırı, aracı kurum ve takas |
+| Binance Global BTCUSDT spot | Public/private akış, LIMIT GTC yaşam döngüsü, base/quote rezervasyonu, bakiye ve fill mutabakatı |
+| XAU/USD | İkincil kapsam; ayrı adaptör ve ayrı ürün kararı olmadan aktif değildir |
+| BTCUSDT isolated margin | Spot production kanıtı ve ayrı margin kararı olmadan aktif değildir |
 
-Bütün piyasalara tek bir emir, pozisyon veya risk modeli zorlanmaz. Ortak çekirdek yetenekleri sorar; ürün modülü en kötü durum kaybını ve geçerli eylemleri hesaplar.
+Perpetual, futures, cross margin ve BIST/hisse bu kartın aktif ilk yol haritasında değildir. Ürün modülü, kendi kabul kartı olmadan ortak çekirdeğe yeni davranış ekleyemez.
 
 ## 5. Birbirinden ayrı üç çalışma ekseni
 
@@ -121,11 +120,11 @@ Bütün piyasalara tek bir emir, pozisyon veya risk modeli zorlanmaz. Ortak çek
 |---|---:|---|
 | BACKTEST | Hayır | Tarihsel hipotez testi |
 | REPLAY | Hayır | Gerçek olay sırası ve motor davranışı |
-| PAPER | Hayır | Canlı veriyle uçtan uca prova |
+| PAPER | Hayır | Kanıtlanmış strateji ve kabul kartı sonrası canlı-veri provası |
 | LIVE_CANARY | Evet, çok küçük | Gerçek dolum ve maliyet ölçümü |
 | LIVE | Evet, onaylı sınırda | Kanıtlanmış tahsis |
 
-Kodun güvenli varsayılanı PAPER’dır. LIVE ve LIVE_CANARY açık insan onayı, sermaye limiti ve onaylanmış strateji sürümü olmadan açılamaz.
+Kanıtlanmış strateji ve kabul kartı yoksa PAPER, LIVE_CANARY ve LIVE kapalıdır. Güvenli başlangıç BACKTEST/REPLAY ve kapalı durumdur. LIVE ve LIVE_CANARY ayrıca açık insan onayı, sermaye limiti ve onaylanmış strateji sürümü olmadan açılamaz.
 
 ### 5.2. Motor durumu
 
@@ -168,7 +167,7 @@ UNATTENDED tek başına botu durdurmaz. Motor kritik sağlık kontrolleri geçiy
 
     HER OLAYDA VE DÜZENLİ SAĞLIK KONTROLÜNDE:
 
-    1. Fill, execution report, iptal cevabı ve settlement olaylarını
+    1. Fill, execution report, iptal cevabı ve işlem sonrası bakiye/pozisyon olaylarını
        motor durumundan bağımsız olarak işle.
 
     2. Kalıcı halt kilidi varsa veya EMERGENCY_STOP alındıysa:
@@ -239,7 +238,7 @@ Her TradeIntent için muhafazakâr net avantaj hesaplanır:
       - beklenen kayma ve market impact
       - ters seçilim maliyeti
       - fonlama / borrow / hedge maliyeti
-      - settlement ve zincir maliyeti
+      - takas, saklama ve varsa borçlanma/hedge maliyeti
       - sermayenin kilitli kalma maliyeti
       - model belirsizlik payı
 
@@ -249,7 +248,7 @@ Her TradeIntent için muhafazakâr net avantaj hesaplanır:
 2. Maliyetler stres senaryosunda büyütüldüğünde avantaj tamamen kaybolmaz.
 3. En kötü durum kaybı güvenilir biçimde hesaplanabilir.
 4. Veri güncel ve tutarlıdır.
-5. Çıkış, vade veya settlement planı vardır.
+5. İptal ve çıkış planı ile azami elde tutma sınırı vardır.
 6. Piyasa ve korelasyon limitleri uygundur.
 7. Emir gerçek uygulanabilir fiyat ve derinlik üzerinden hesaplanmıştır.
 8. İlgili alan NORMAL durumundadır.
@@ -271,53 +270,53 @@ Sermaye her pozitif sinyale dağıtılmaz. Risk bütçesi dolduğunda daha düş
 
 Aşağıdakilerden biri varsa piyasa işleme kapatılır:
 
-- Resolution/settlement şartı yorumlanamayacak kadar belirsizse
+- Ürün, sembol veya işlem kuralları doğrulanamıyorsa
 - Gerçek alış/satış fiyatında yeterli derinlik yoksa
-- Fiyat, emir, fill veya settlement verisi güvenilir değilse
+- Fiyat, emir defteri, emir veya fill verisi güvenilir değilse
 - Kötü durum kaybı hesaplanamıyorsa
 - Mevcut portföyle aynı kötü senaryoda aşırı yoğunlaşma yaratıyorsa
-- Çıkış veya vade sonuna kadar taşıma planı yoksa
+- İptal, çıkış veya azami elde tutma planı yoksa
 - Beklenen sermaye getirisi, seçilmiş risksiz kıstas ve gerekli risk primini aşmıyorsa
 - Platform/saklama riski kabul edilen sınırı aşıyorsa
 
 Pilot varsayılanında tek emir büyüklüğü, görünen uygulanabilir derinliğin yüzde 10’unu ve uygun yakın dönem hacmin yüzde 5’ini aşamaz. Görünen derinlik dolum garantisi değildir; yalnız kapasite tavanıdır. Strateji kartı daha düşük sınır koyabilir; daha yüksek sınır için canlı execution kanıtı gerekir.
 
-## 10. İlk ekonomik hipotez: seçici piyasa yapıcılık
+## 10. İlk strateji yönü: BTCUSDT spot price-action araştırması
 
-v0.1’in ilk test edilecek Polymarket hipotezi, her piyasada sürekli emir vermek değil; yalnız temiz resolution şartı, yeterli likidite ve ölçülebilir net avantaj bulunan piyasalarda çalışan likidite-duyarlı piyasa yapıcılıktır.
+Trading OS’un ilk strateji yönü BTCUSDT spotta price-action temelli araştırma ve kanıt sürecidir. İlk canlı strateji önceden kabul edilmiş değildir. Aday hipotezler yalnız kanıt paketi üretir; kanıtlanmış strateji ve ayrı kabul kartı olmadan PAPER, LIVE_CANARY veya LIVE açılmaz.
 
-### 10.1. Teklif üretimi
+### 10.1. Araştırma kanıtı
 
-Her iki taraf ayrı değerlendirilir:
+İlk değerlendirme sırası şöyledir:
 
-    Maker alış avantajı = adil değer - önerilen bid limit fiyatı
-    Maker satış avantajı = önerilen ask limit fiyatı - adil değer
+    Hipotez
+      → Veri kalite testi
+      → Causal event study
+      → Walk-forward
+      → Holdout
+      → Replay
+      → PAPER
+      → LIVE_CANARY
+      → Sınırlı LIVE
 
-    Taker alış avantajı = adil değer - uygulanabilir ask fiyatı
-    Taker satış avantajı = uygulanabilir bid fiyatı - adil değer
+Price-action adayları kapanış, aralık, hacim, volatilite, spread, uygulanabilir derinlik ve açık maliyet varsayımlarıyla değerlendirilir. Her deney; veri sürümünü, hipotezi, denenen parametreleri, örneklem dışı sonucu, holdout sonucunu, maliyet stresini ve reddedilen fırsatların gölge sonucunu kaydeder.
 
-    Gerekli minimum avantaj
-      = ücret
-      + beklenen ters seçilim
-      + volatilite tamponu
-      + model belirsizliği
-      + inventory maliyeti
-      + hedef net kâr
+Bu bölüm strateji seçmez, emir gönderme yetkisi vermez ve canlı sermaye tahsis etmez. PAPER yalnızca kanıtlanmış strateji sürümü ile ayrı kabul kartı sonrasında açılabilir; LIVE_CANARY ve LIVE için ayrıca açık insan onayı ve sermaye limiti gerekir.
 
-Yalnız ilgili tarafın avantajı gerekli minimum avantajı geçiyorsa emir üretilebilir.
+### 10.2. Execution ve risk gözlemi
 
-### 10.2. Davranış kuralları
+Araştırma sırasında şu koşullar ayrı ölçülür:
 
-- Volatilite ve model belirsizliği yükselince teklif aralığı genişler, miktar küçülür.
-- Inventory bir yönde büyüyünce aynı yöndeki yeni emirler geri çekilir; azaltıcı taraf öncelik kazanır.
-- Inventory limite yaklaşınca çift taraflı teklif yerine yalnız azaltıcı taraf kalabilir.
-- Ani fiyat/veri şoku algılanınca risk artıran emirler iptal edilir ve soğuma + mutabakat tamamlanana kadar yeni emir üretilmez.
-- Vade/sonuçlandırma yaklaştıkça resolution ve sermaye kilidi riski ayrıca fiyatlanır.
-- Likidite alan taker emirleri yalnız pasif emre göre belirgin biçimde daha yüksek muhafazakâr avantaj varsa kullanılabilir.
-- Teorik arbitrajda bütün bacaklar, hedge gecikmesi ve başarısız bacak senaryosu fiyatlanmadan işlem yapılmaz.
-- Momentum, ortalamaya dönüş ve yeni arbitraj türleri ayrı strateji kartı ve kabul testi olmadan canlı sermaye alamaz.
+- Veri tazeliği ve sıra bütünlüğü
+- Gerçek spread ve uygulanabilir derinlik
+- Maker/taker ücretleri, beklenen kayma ve adverse selection
+- Base/quote rezervasyonu, açık ve unknown emirler
+- Exchange/API sağlığı, bakiye ve pozisyon mutabakatı
+- Çıkış likiditesi, platform/saklama riski ve sermaye kullanım süresi
 
-Bu bölüm bir kârlılık garantisi değil, test edilecek ilk ekonomik hipotezdir. Test kapılarından geçmezse mimari korunur; strateji rafa kaldırılır.
+Bu ölçümler ekonomik kapının girdisidir; tek başına price-action hipotezini veya canlı yetkisini onaylamaz.
+
+Bu bölüm bir kârlılık garantisi değil, kanıtlanması gereken ilk araştırma yönüdür. Test kapılarından geçmezse strateji rafa kaldırılır; mimari sınırlar korunur.
 
 ## 11. TradeIntent ve emir gönderme kapısı
 
@@ -369,8 +368,8 @@ Yüzdeler kullanıcının Trading OS’a açıkça ayırdığı bot sermayesi ü
 | Risk | Pilot üst sınır |
 |---|---:|
 | Tek bağımsız işlem kararı | Bot sermayesinin yüzde 0,25’i en kötü kayıp |
-| Tek piyasa/kontrat | Yüzde 1 en kötü toplam kayıp |
-| Aynı kötü senaryoda kaybeden olay kümesi | Yüzde 2 |
+| Tek sembol | Yüzde 1 en kötü toplam kayıp |
+| Aynı kötü senaryoda birlikte kaybeden korelasyonlu risk kümesi | Yüzde 2 |
 | Yuvarlanan 24 saatlik gerçekleşmiş + muhafazakâr açık zarar | Yüzde 1 |
 | Yuvarlanan yedi günlük zarar | Yüzde 2,5 |
 | Zirveden toplam sermaye düşüşü | Yüzde 5 |
@@ -384,7 +383,8 @@ Uygulama:
 - Zirveden yüzde 5 düşüşte bütün yeni risk global olarak durur.
 - Bir stratejinin olağan dalgalanması bu sınırları aşıyorsa limit yükseltilmez; pozisyon küçültülür.
 - Kademeli alım yalnız toplam kötü durum kaybı baştan ayrılmışsa kullanılabilir.
-- Kaldıraç v0.1’de kapalıdır. Perpetual ürünler ayrı marjin/tasfiye kartı onaylanmadan LIVE olamaz.
+- Kaldıraç ve borçlanma bu kartın 0.2 sürümünde kapalıdır. BTCUSDT isolated margin yalnız spot production kanıtı ve ayrı margin kararı sonrasında ele alınabilir.
+- XAU/USD yalnız BTCUSDT spot çekirdek, veri, replay, risk, PAPER ve execution kapıları tamamlandıktan ve ayrı ürün kararı verildikten sonra ele alınabilir.
 - Tek platformda tutulan fon için ayrıca platform/saklama tavanı belirlenmeden LIVE açılamaz.
 
 Bu sayısal pilot sınırlar, kanıt sunan yeni bir risk karar kartıyla değiştirilebilir. Panel veya AI tarafından sessizce yükseltilemez.
@@ -395,10 +395,11 @@ Hiçbir strateji şu sırayı atlayamaz:
 
     Hipotez
       → Veri kalite testi
+      → Causal event study
       → Backtest / walk-forward
-      → Out-of-sample
+      → Holdout / out-of-sample
       → Replay
-      → Paper
+      → PAPER
       → LIVE_CANARY
       → Sınırlı LIVE
       → Kanıtlanmış tahsis
@@ -412,13 +413,13 @@ Hiçbir strateji şu sırayı atlayamaz:
 - En az üç ayrı zaman/olay/rejim diliminin çoğunda maliyet sonrası sonuç pozitiftir.
 - Birleşik out-of-sample net beklentinin yüzde 95 güven alt sınırı sıfırın üzerindedir.
 - Ücret, kayma ve gecikme iki kat streslendiğinde net beklenti negatif olmaz ve düşüş onaylı pilot risk bütçesini aşmaz.
-- Sonuç tek piyasa, tek olay veya birkaç şanslı işlemden gelmez.
+- Sonuç tek dönem, tek piyasa rejimi veya birkaç şanslı işlemden gelmez.
 - Parametre komşuluklarında sonuç çökmez; tek sivri optimum kabul edilmez.
 - Test düşüşü, kapasitesi ve sermaye kilitlenmesi raporlanır.
 
 ### 13.2. Paper gerçeği
 
-Paper aşaması veri, karar, risk, panel ve kayıt zincirinin çalıştığını kanıtlar. Özellikle maker stratejisinde gerçek sıra önceliği ve dolum kalitesini kanıtlamaz. Bu nedenle paper’dan sonra mikro canlı zorunludur.
+PAPER, yalnızca kanıtlanmış strateji sürümü ve ayrı kabul kartı mevcutsa açılabilir. PAPER aşaması veri, karar, risk, panel ve kayıt zincirinin çalıştığını kanıtlar; gerçek sıra önceliği ve dolum kalitesini tek başına kanıtlamaz. PAPER sonucu canlıya geçiş hakkı doğurmaz. İleride canlı değerlendirme ancak ayrı strateji kartı, kabul testi, sermaye limiti ve açık kullanıcı onayıyla ele alınabilir.
 
 ### 13.3. LIVE_CANARY ve ölçekleme
 
@@ -426,7 +427,7 @@ Paper aşaması veri, karar, risk, panel ve kayıt zincirinin çalıştığını
 - Varsayılan ölçekleme değerlendirmesi için en az 30 canlı gün ve 100 bağımsız karar kümesi gerekir.
 - Canlı ücret ve execution maliyeti model tahmininden yüzde 25’ten fazla sapmamalıdır.
 - Canlı maliyet sonrası beklenti pozitif kalmalıdır.
-- Tek olay toplam canlı kârın yüzde 25’inden fazlasını oluşturmamalıdır.
+- Tek dönem veya tek işlem kümesi toplam canlı kârın yüzde 25’inden fazlasını oluşturmamalıdır.
 - Tahsis tek adımda en fazla iki katına çıkabilir ve iki artış arasında en az yedi gün bulunur.
 - Tam tahsis için varsayılan olarak en az 300 bağımsız canlı karar kümesi gerekir.
 
@@ -441,7 +442,7 @@ Düşük frekanslı stratejide gözlem sayısı istatistiksel olarak oluşmuyors
 | Son 100 bağımsız kararda net beklenti negatif | Stratejiyi yeni riske kapat, neden analizi |
 | Net beklentinin yüzde 95 güven aralığı üst sınırı dahi sıfır veya altı | Stratejiyi rafa kaldır |
 | Canlı düşüş, stres backtest düşüşünün 1,5 katını aşar | Stratejiyi durdur |
-| Tek olay toplam kârın yüzde 25’inden fazlasını oluşturur | Ölçekleme yasağı |
+| Tek dönem veya tek işlem kümesi toplam kârın yüzde 25’inden fazlasını oluşturur | Ölçekleme yasağı |
 | Emir/pozisyon mutabakat farkı | İlgili alan RECONCILING |
 | Risk motoru veya piyasa verisi güvenilmez | Yeni risk anında durur |
 
@@ -581,7 +582,7 @@ Kurallar:
       - kayma ve market impact
       - fonlama / borrow
       - hedge
-      - settlement ve zincir maliyetleri
+      - takas, saklama ve varsa borçlanma/hedge maliyetleri
 
 Her emir ve strateji için en az şunlar tutulur:
 
@@ -592,7 +593,7 @@ Her emir ve strateji için en az şunlar tutulur:
 - Dolumdan 1, 10 ve 60 saniye sonraki ters fiyat hareketi
 - Ücret, rebate, kayma ve market impact
 - Açık risk ve sermaye kullanım süresi
-- Strateji, piyasa, olay kümesi, platform ve hesap bazında net P&L
+- Strateji, sembol, risk kümesi, platform ve hesap bazında net P&L
 - Reddedilen fırsatların gölge sonucu
 - Backtest/paper tahmini ile canlı sonuç farkı
 
@@ -671,7 +672,7 @@ Bu kart aşağıdaki otomatik testler geçmeden uygulanmış sayılmaz.
 - [ ] Ücret, kayma ve belirsizlik sonrası avantaj sıfır veya altındaysa intent reddedilir.
 - [ ] Bütün maliyet kalemleri strateji/model sürümüyle kayıt altındadır.
 - [ ] Risk bütçesi doluyken daha düşük skorlu fırsat reddedilir.
-- [ ] Resolution şartı veya kötü durum kaybı belirsiz ürün canlıya alınmaz.
+- [ ] Ürün kuralları veya kötü durum kaybı belirsiz bir araç canlıya alınmaz.
 - [ ] Backtest ve canlı P&L aynı net maliyet tanımını kullanır.
 
 ### 22.3. Kesinti ve mutabakat
@@ -736,12 +737,12 @@ Bir sohbet, ajan, panel ayarı, AI önerisi veya platform kolaylığı bu adıml
 
 ## 25. Nihai hüküm
 
-Trading OS’un para kazanma yaklaşımı daha fazla tahminde bulunmak değil; yalnızca maliyet sonrası avantajı kanıtlanmış işlemleri seçmek, kötü fiyatlanan riski reddetmek, canlı gerçeğe göre hızla küçülmek ve teknik belirsizlikte yeni risk almamaktır.
+Trading OS’un para kazanma yaklaşımı daha fazla işlem üretmek değil; yalnızca maliyet sonrası avantajı kanıtlanmış işlemleri seçmek, kötü fiyatlanan riski reddetmek, canlı gerçeğe göre hızla küçülmek ve teknik belirsizlikte yeni risk almamaktır.
 
 Bu kart eklendiğinde:
 
 - Mimari sınırlar bağlayıcıdır.
 - Çalışma ve kesinti algoritması bağlayıcıdır.
 - Pilot risk limitleri varsayılandır.
-- İlk Polymarket piyasa yapıcılık yaklaşımı test hipotezidir; canlıya otomatik onay değildir.
+- İlk BTCUSDT spot price-action yönü yalnız kanıt araştırmasıdır; kanıtlanmış strateji ve ayrı strateji kartı olmadan PAPER, LIVE_CANARY veya LIVE açılamaz.
 - Platforma özel değerler ve strateji parametreleri ayrı kartlarla tamamlanacaktır.

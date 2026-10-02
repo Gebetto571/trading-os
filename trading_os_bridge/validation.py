@@ -16,6 +16,8 @@ MESSAGE_KEYS = {
 LOCAL_ARTIFACT_KEYS = {"name", "uri", "sha256"}
 EXTERNAL_ARTIFACT_KEYS = {"kind", "name", "url"}
 VALID_TYPES = {"task", "response", "decision", "status", "error"}
+MESSAGE_SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schemas/message.schema.json"
+MESSAGE_SCHEMA_DRAFT = "https://json-schema.org/draft/2020-12/schema"
 DEFAULT_ROLES = {
     "orchestrator", "docs-manager", "cloud-planner", "codex-dev",
     "bridge-engineer", "operations-engineer", "governance-reviewer",
@@ -32,6 +34,7 @@ BRIEF_KEYS = {
     "outcome", "approved_logic", "in_scope", "non_goals", "acceptance_criteria",
     "required_tests", "risks", "stop_conditions",
 }
+LEGACY_BRIEF_KEYS = {"invariants", "assumptions", "evidence_references"}
 RESULT_KEYS = {
     "verification_verdict", "changed_files", "commands", "git_state",
     "skipped_checks", "risks", "next_safe_step", "permission_state",
@@ -63,8 +66,18 @@ def load_registry_roles(registry_path: Path | None = None) -> set[str]:
     roles = set(DEFAULT_ROLES)
     if registry_path is None or not registry_path.is_file():
         return roles
-    for match in re.finditer(r"^\|\s*`([^`]+)`\s*\|", registry_path.read_text(encoding="utf-8"), re.MULTILINE):
-        roles.add(match.group(1))
+    in_role_table = False
+    for line in registry_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not in_role_table:
+            if stripped.startswith("| role_key |"):
+                in_role_table = True
+            continue
+        if not stripped.startswith("|"):
+            break
+        match = re.match(r"\|\s*`([^`]+)`\s*\|", stripped)
+        if match is not None:
+            roles.add(match.group(1))
     return roles
 
 
@@ -160,11 +173,15 @@ def _validate_chief_engineer_metadata(message: dict, conversation_map: dict[str,
         if metadata.get("change_mode") not in CHANGE_MODES:
             raise ValueError("change_mode FAST, STANDARD veya STRICT olmalı")
         brief = metadata.get("implementation_brief")
-        if not isinstance(brief, dict) or set(brief) != BRIEF_KEYS:
+        allowed_brief_profiles = {frozenset(BRIEF_KEYS), frozenset(BRIEF_KEYS | LEGACY_BRIEF_KEYS)}
+        if not isinstance(brief, dict) or frozenset(brief) not in allowed_brief_profiles:
             raise ValueError("implementation_brief alanları eksik veya fazla")
         _require_string(brief["outcome"], "implementation_brief.outcome", 1, 4096)
         for key in BRIEF_KEYS - {"outcome"}:
             _string_list(brief[key], f"implementation_brief.{key}")
+        for key in LEGACY_BRIEF_KEYS:
+            if key in brief:
+                _string_list(brief[key], f"implementation_brief.{key}")
     elif message["type"] in {"response", "status", "error"}:
         if message["sender"] != "codex-local" or message["recipient"] != "chatgpt":
             raise ValueError("Chief Engineer sonucu codex-local -> chatgpt yönünde olmalı")
@@ -196,6 +213,141 @@ def _validate_chief_engineer_metadata(message: dict, conversation_map: dict[str,
             raise ValueError("Bulut kabulü dış işlem yetkisi veremez")
     else:
         raise ValueError("Chief Engineer metadata bu mesaj türünde kullanılamaz")
+
+
+def _schema_uuid(value: object) -> bool:
+    try:
+        _uuid(value, "schema UUID")
+    except ValueError:
+        return False
+    return True
+
+
+def _schema_utc_z(value: object) -> bool:
+    if not isinstance(value, str) or not 20 <= len(value) <= 32 or not UTC_Z_RE.fullmatch(value):
+        return False
+    try:
+        datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return False
+    return True
+
+
+def _schema_safe_body(value: object) -> bool:
+    return isinstance(value, str) and not (
+        PRIVATE_KEY_RE.search(value) or SECRET_ASSIGNMENT_RE.search(value)
+    )
+
+
+def _schema_safe_uri(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    parsed = urlparse(value)
+    if parsed.scheme not in {"file", "https", "git"}:
+        return False
+    for key, _ in parse_qsl(parsed.query, keep_blank_values=True):
+        normalized = re.sub(r"[^a-z0-9]+", "_", key.lower()).strip("_")
+        if normalized in FORBIDDEN_METADATA_KEYS:
+            return False
+    return True
+
+
+def _schema_safe_metadata(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    try:
+        _reject_forbidden_metadata(value)
+        return len(canonical_bytes(value)) <= MAX_METADATA_BYTES
+    except (TypeError, ValueError):
+        return False
+
+
+def _schema_strict_integer(value: object) -> bool:
+    return type(value) is int
+
+
+def _schema_format_checker():
+    try:
+        from jsonschema import FormatChecker
+    except ImportError as error:
+        raise ValueError("Draft 2020-12 validator bağımlılığı kullanılamıyor") from error
+
+    checker = FormatChecker()
+    checker.checks("trading-os-uuid")(_schema_uuid)
+    checker.checks("trading-os-utc-z")(_schema_utc_z)
+    checker.checks("trading-os-safe-body")(_schema_safe_body)
+    checker.checks("trading-os-safe-uri")(_schema_safe_uri)
+    checker.checks("trading-os-safe-metadata")(_schema_safe_metadata)
+    checker.checks("trading-os-strict-integer")(_schema_strict_integer)
+    return checker
+
+
+def _assert_local_schema_references(value: object, location: str = "$") -> None:
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            nested_location = f"{location}.{key}"
+            if key == "$ref" and (not isinstance(nested, str) or not nested.startswith("#")):
+                raise ValueError(f"JSON Schema yalnız yerel $ref kullanabilir: {nested_location}")
+            _assert_local_schema_references(nested, nested_location)
+    elif isinstance(value, list):
+        for index, nested in enumerate(value):
+            _assert_local_schema_references(nested, f"{location}[{index}]")
+
+
+def _schema_formats(value: object) -> set[str]:
+    if isinstance(value, dict):
+        formats = {nested for key, nested in value.items() if key == "format" and isinstance(nested, str)}
+        for nested in value.values():
+            formats.update(_schema_formats(nested))
+        return formats
+    if isinstance(value, list):
+        formats: set[str] = set()
+        for nested in value:
+            formats.update(_schema_formats(nested))
+        return formats
+    return set()
+
+
+def load_message_schema(schema_path: Path | None = None) -> dict:
+    path = schema_path or MESSAGE_SCHEMA_PATH
+    document = parse_json_strict(path.read_bytes())
+    if not isinstance(document, dict) or document.get("$schema") != MESSAGE_SCHEMA_DRAFT:
+        raise ValueError("message.schema.json Draft 2020-12 sözleşmesi değil")
+    _assert_local_schema_references(document)
+    return document
+
+
+def validate_schema_message(message: object, schema_path: Path | None = None) -> dict:
+    try:
+        from jsonschema import Draft202012Validator, SchemaError
+    except ImportError as error:
+        raise ValueError("Draft 2020-12 validator bağımlılığı kullanılamıyor") from error
+
+    schema = load_message_schema(schema_path)
+    checker = _schema_format_checker()
+    unsupported = _schema_formats(schema) - set(checker.checkers)
+    if unsupported:
+        raise ValueError("JSON Schema desteklenmeyen format kullanıyor: " + ", ".join(sorted(unsupported)))
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as error:
+        raise ValueError(f"JSON Schema Draft 2020-12 geçersiz: {error.message}") from error
+    validator = Draft202012Validator(schema, format_checker=checker)
+    errors = sorted(
+        validator.iter_errors(message),
+        key=lambda error: (tuple(str(item) for item in error.absolute_path), error.message),
+    )
+    if errors:
+        first = errors[0]
+        path = ".".join(str(item) for item in first.absolute_path) or "$"
+        raise ValueError(f"JSON Schema v1 reddi ({path}): {first.message}")
+    if not isinstance(message, dict):
+        raise ValueError("JSON Schema geçerli olmayan mesaj nesnesi")
+    return message
+
+
+def validate_schema_raw(raw: bytes, schema_path: Path | None = None) -> dict:
+    return validate_schema_message(parse_json_strict(raw), schema_path)
 
 
 def validate_message(

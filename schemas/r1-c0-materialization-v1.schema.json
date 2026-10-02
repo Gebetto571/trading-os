@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trading-os.local/schemas/r1-c0-materialization-v1.schema.json",
+  "title": "Trading OS R1 to C0 Materialization Evidence V1",
+  "description": "A non-executable, one-way canonical evidence binding from R1 screening bytes to a C0 Strategy Contract V1 wire document.",
+  "$comment": "This envelope is evidence only. It does not invoke a runtime, create persistent lineage, or grant any order, broker, paper, live, network, or venue capability. Every canonical byte field is UTF-8 JSON encoded with lexicographically sorted keys, comma/colon separators, ensure_ascii true, no duplicate keys, and no insignificant whitespace.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mapping_version",
+    "r1_source",
+    "r1_source_bundle_sha256",
+    "c0_contract_wire_utf8_base64",
+    "c0_contract_wire_sha256",
+    "materialization_id"
+  ],
+  "properties": {
+    "mapping_version": {
+      "type": "integer",
+      "format": "trading-os-strict-integer",
+      "const": 1
+    },
+    "r1_source": {
+      "$ref": "#/$defs/r1_source"
+    },
+    "r1_source_bundle_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "c0_contract_wire_utf8_base64": {
+      "$ref": "#/$defs/base64"
+    },
+    "c0_contract_wire_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "materialization_id": {
+      "$ref": "#/$defs/sha256"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "base64": {
+      "type": "string",
+      "minLength": 4,
+      "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+    },
+    "r1_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_canonical_utf8_base64",
+        "candidate_id",
+        "candidate_raw_sha256",
+        "manifest_canonical_utf8_base64",
+        "screening_manifest_id",
+        "manifest_raw_sha256",
+        "trace_canonical_utf8_base64",
+        "trace_id",
+        "trace_raw_sha256"
+      ],
+      "properties": {
+        "candidate_canonical_utf8_base64": {
+          "$ref": "#/$defs/base64"
+        },
+        "candidate_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "candidate_raw_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "manifest_canonical_utf8_base64": {
+          "$ref": "#/$defs/base64"
+        },
+        "screening_manifest_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "manifest_raw_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "trace_canonical_utf8_base64": {
+          "$ref": "#/$defs/base64"
+        },
+        "trace_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "trace_raw_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    }
+  }
+}

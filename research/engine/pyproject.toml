@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trading-os-research-engine-a0"
+version = "0.1.0"
+description = "Isolated, read-only deterministic research engine skeleton"
+requires-python = ">=3.9"
+dependencies = [
+  "polars==1.35.2",
+]
+
+[tool.research-engine]
+runtime_boundary = "local-only"
+dataset_access = "read-only"

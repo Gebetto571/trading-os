@@ -1,0 +1,6 @@
+# All values are intentionally explicit so a run has a stable config hash.
+dataset_path = "../fixtures/candles_v1.parquet"
+dataset_sha256 = "eddd8b7c5ef741a617944d778eed95f8d6313cb2027813474fa1a7c70b7e23b3"
+runtime_dir = "../runtime"
+trial_id = "baseline-v1"
+strategy_family_id = "deterministic-event-study-v1"

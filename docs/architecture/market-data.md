@@ -46,13 +46,20 @@ data/parquet/
 ## CLI
 
 Alt komutlar: `plan`, `download`, `import`, `validate`, `repair`, `aggregate`,
-`export-parquet`, `verify-parquet`, `compare-binance`, `run`, `sync`, `status`. `run` aşamaları güvenli
+`export-parquet`, `verify-parquet`, `query-candles`, `compare-binance`, `run`, `sync`, `status`. `run` aşamaları güvenli
 sırada çalıştırır. `--download-concurrency` 1-16 arasında ayarlanabilir ve
 varsayılanı 4'tür. `compare-binance`, UTC gün sınırları içindeki kanonik 15m, 1h,
 4h ve 1d mumları Binance'ın yayımladığı mumlarla birebir karşılaştırır.
 `verify-parquet`, seçilen aylardaki beş zaman diliminin Parquet şemasını, bölüm
 envanterini ve ihraç edilen 17 PostgreSQL alanını 4.096 satırlık akışlarla birebir
 karşılaştırır; JSON raporu üretir ve herhangi bir farkta başarısız olur.
+
+`query-candles`, PostgreSQL'deki kanonik `1m`, `15m`, `1h`, `4h` veya `1d`
+mumlarını salt okunur ve zaman sıralı JSON ya da CSV olarak döndürür. Migration veya veri
+yazımı çalıştırmaz; PostgreSQL oturumu da `read only` olarak açılır. Bir sayfa en fazla 4.096 satırdır; devam sayfası için yanıttaki
+`next_cursor` değeri `--cursor` olarak verilir. Decimal alanlar hassasiyet kaybını
+önlemek için JSON string biçimindedir. CSV kullanıldığında son satırın `open_time`
+değeri devam imlecidir.
 
 `sync`, PostgreSQL'deki son kanonik 1m mumdan devam eder ve başlangıçta son
 kapanmış dakikayı sabitler. Aynı sembolde iki çalışmayı session advisory lock ile

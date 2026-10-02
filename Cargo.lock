@@ -3705,6 +3705,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "trading-os-execution-core"
+version = "0.1.0"
+
+[[package]]
 name = "trading-os-market-data"
 version = "0.1.0"
 dependencies = [
@@ -3731,6 +3735,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zip",
+]
+
+[[package]]
+name = "trading-os-strategy-runtime"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]

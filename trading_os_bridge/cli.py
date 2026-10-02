@@ -234,9 +234,19 @@ def command_claim(args: argparse.Namespace) -> int:
 
 def command_claim_task(args: argparse.Namespace) -> int:
     try:
-        row = store().claim_chief_engineer_task(
-            args.lane, args.base_commit, args.owned_path, args.lease_seconds,
-        )
+        task_id = getattr(args, "id", None)
+        principal = getattr(args, "principal", "chief-engineer")
+        if task_id is not None:
+            row = store().claim_chief_engineer_task_by_id(
+                task_id, args.lane, args.base_commit, args.owned_path,
+                args.lease_seconds, principal,
+            )
+        else:
+            if principal != "chief-engineer":
+                raise InvalidTransition("Legacy Chief claim yalnız chief-engineer principal ile yapılabilir")
+            row = store().claim_chief_engineer_task(
+                args.lane, args.base_commit, args.owned_path, args.lease_seconds,
+            )
     except (InvalidTransition, OwnershipConflict, ValueError) as error:
         print(json.dumps({"claimed": False, "error": str(error)}, ensure_ascii=False))
         return 1
@@ -244,6 +254,21 @@ def command_claim_task(args: argparse.Namespace) -> int:
         print(json.dumps({"claimed": False}))
         return 1
     print(json.dumps({"claimed": True, **dict(row)}, ensure_ascii=False))
+    return 0
+
+
+def command_reclaim_task(args: argparse.Namespace) -> int:
+    try:
+        row = store().reclaim_chief_engineer_task_by_id(
+            args.id, args.lane, args.lease_seconds, args.principal,
+        )
+    except (InvalidTransition, OwnershipConflict, ValueError) as error:
+        print(json.dumps({"reclaimed": False, "error": str(error)}, ensure_ascii=False))
+        return 1
+    if row is None:
+        print(json.dumps({"reclaimed": False}))
+        return 1
+    print(json.dumps({"reclaimed": True, **dict(row)}, ensure_ascii=False))
     return 0
 
 
@@ -315,13 +340,25 @@ def _result_readback_matches(row: sqlite3.Row, expected: dict) -> bool:
     ) and stored["metadata"].get("result") == expected["metadata"].get("result")
 
 
+def _link_or_confirm_result(database: Store, task_id: str, result_id: str) -> bool:
+    """Link a newly created result, or accept the same result linked by a racing retry."""
+    if database.link_result(task_id, result_id):
+        return True
+    task = database.get_message(task_id)
+    return task is not None and task["result_message_id"] == result_id
+
+
 def command_result(args: argparse.Namespace) -> int:
     database = store()
     task = database.get_message(args.task_id)
     if task is None:
         print("Görev bulunamadı")
         return 1
-    if task["status"] != "processing" or task["active_writer"] != "chief-engineer":
+    if (
+        task["status"] != "processing"
+        or task["active_writer"] != "chief-engineer"
+        or not database.has_active_chief_lease(task["id"])
+    ):
         print("Görev aktif Chief Engineer sahipliğinde değil")
         return 1
     if task["result_message_id"] is not None:
@@ -344,7 +381,7 @@ def command_result(args: argparse.Namespace) -> int:
             print("Mevcut deterministik sonuç içeriği yeni raporla eşleşmiyor")
             return 1
         try:
-            if not database.link_result(task["id"], message["id"]):
+            if not _link_or_confirm_result(database, task["id"], message["id"]):
                 raise InvalidTransition("Mevcut sonuç görevle ilişkilendirilemedi")
         except InvalidTransition as error:
             print(f"Sonuç üretilemedi: {error}")
@@ -355,20 +392,48 @@ def command_result(args: argparse.Namespace) -> int:
     stamp = message["created_at"].replace("-", "").replace(":", "")
     destination = OUTBOX / f"{stamp}__{message['id'][:8]}__response.json"
     raw = (json.dumps(message, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-    staging = destination.with_name("." + destination.name + ".tmp")
+    staging = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
+    source_uri = destination.resolve().as_uri()
+    stored_result = False
+    created_destination = False
     try:
         staging.write_bytes(raw)
         os.chmod(staging, 0o600)
-        os.replace(staging, destination)
-        database.put_message(message, "outbound", "queued", destination.resolve().as_uri(), raw)
+        try:
+            os.link(staging, destination)
+            created_destination = True
+        except FileExistsError:
+            # A concurrent deterministic retry owns the existing immutable file.
+            pass
+        finally:
+            if staging.exists():
+                staging.unlink()
+        stored_result = database.put_message(message, "outbound", "queued", source_uri, raw)
+        if not stored_result:
+            existing_result = database.get_message(message["id"])
+            if (
+                existing_result is None
+                or existing_result["direction"] != "outbound"
+                or not _result_readback_matches(existing_result, message)
+            ):
+                raise IntegrityConflict("Yeni sonuç UUID'si farklı veya okunamaz içerikle zaten mevcut")
+            if created_destination and existing_result["source_uri"] != source_uri and destination.exists():
+                destination.unlink()
+            if not _link_or_confirm_result(database, task["id"], message["id"]):
+                raise InvalidTransition("Yarışan sonuç görevle ilişkilendirilemedi")
+            print(Path(unquote(urlparse(existing_result["source_uri"]).path)))
+            return 0
         readback = database.get_message(message["id"])
         if readback is None or not _result_readback_matches(readback, message):
             raise InvalidTransition("Sonuç yerel geri okumada doğrulanamadı")
-        if not database.link_result(task["id"], message["id"]):
+        if not _link_or_confirm_result(database, task["id"], message["id"]):
             raise InvalidTransition("Sonuç görevle atomik olarak ilişkilendirilemedi")
     except (OSError, sqlite3.Error, IntegrityConflict, InvalidTransition) as error:
         if staging.exists():
             staging.unlink()
+        discarded = stored_result and database.discard_unlinked_outbound_result(message["id"], source_uri)
+        if created_destination and discarded and destination.exists():
+            destination.unlink()
         print(f"Sonuç üretilemedi: {error}")
         return 1
     print(destination)
@@ -425,11 +490,19 @@ def parser() -> argparse.ArgumentParser:
     claim_cmd.add_argument("--lease-seconds", type=int, default=300)
     claim_cmd.set_defaults(func=command_claim)
     claim_task_cmd = commands.add_parser("claim-task")
+    claim_task_cmd.add_argument("--id")
     claim_task_cmd.add_argument("--lane", required=True)
+    claim_task_cmd.add_argument("--principal", default="chief-engineer")
     claim_task_cmd.add_argument("--base-commit", required=True)
     claim_task_cmd.add_argument("--owned-path", action="append", required=True)
     claim_task_cmd.add_argument("--lease-seconds", type=int, default=1800)
     claim_task_cmd.set_defaults(func=command_claim_task)
+    reclaim_task_cmd = commands.add_parser("reclaim-task")
+    reclaim_task_cmd.add_argument("--id", required=True)
+    reclaim_task_cmd.add_argument("--lane", required=True)
+    reclaim_task_cmd.add_argument("--principal", default="chief-engineer")
+    reclaim_task_cmd.add_argument("--lease-seconds", type=int, default=1800)
+    reclaim_task_cmd.set_defaults(func=command_reclaim_task)
     result_cmd = commands.add_parser("result")
     result_cmd.add_argument("task_id")
     result_cmd.add_argument("--report", required=True)

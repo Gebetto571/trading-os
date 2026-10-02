@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import shutil
 import tempfile
 import threading
@@ -7,7 +8,10 @@ import uuid
 import os
 from pathlib import Path
 
-from trading_os_bridge.store import IntegrityConflict, InvalidTransition, OwnershipConflict, Store
+from trading_os_bridge.store import (
+    DISPOSABLE_MARKER, DISPOSABLE_MARKER_CONTENT, DisposableMigrationRequired,
+    IntegrityConflict, InvalidTransition, NotReversibleMigration, OwnershipConflict, Store,
+)
 
 
 MIGRATIONS = Path(__file__).parents[1] / "migrations"
@@ -37,6 +41,19 @@ def chief_task(domain="00", message_id=None):
     return item
 
 
+def bound_chief_task(domain="00", paths=None, base_commit="abc123", message_id=None):
+    paths = paths or ["tests/exact_claim.py"]
+    item = chief_task(domain, message_id)
+    item["metadata"]["FROZEN_OWNED_PATHS"] = list(paths)
+    item["metadata"]["SCOPE_BINDING_MANIFEST"] = {
+        "active_writer_principal": "chief-engineer",
+        "canonical_lane": f"chief-engineer/{domain}",
+        "expected_base_commit": base_commit,
+        "exact_owned_paths": list(paths),
+    }
+    return item
+
+
 class StoreHardeningTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -45,6 +62,23 @@ class StoreHardeningTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def disposable_store(self, migrations=MIGRATIONS):
+        root = Path(tempfile.mkdtemp(dir=self.temp.name, prefix="trading-os-disposable-"))
+        (root / DISPOSABLE_MARKER).write_text(DISPOSABLE_MARKER_CONTENT, encoding="utf-8")
+        return Store(root / "fixture.db", migrations)
+
+    @staticmethod
+    def migration_snapshot(store):
+        with store.connect() as connection:
+            schema = [tuple(row) for row in connection.execute(
+                "SELECT type, name, tbl_name, sql FROM sqlite_master "
+                "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+            )]
+            versions = [row[0] for row in connection.execute(
+                "SELECT version FROM schema_migrations ORDER BY version"
+            )]
+        return {"schema": schema, "versions": versions}
 
     def test_duplicate_and_integrity_conflict(self):
         original = message()
@@ -161,6 +195,189 @@ class StoreHardeningTests(unittest.TestCase):
         for paths in (["/tmp/x"], ["../secret"], ["schemas", "schemas/message.schema.json"]):
             with self.subTest(paths=paths), self.assertRaises(ValueError):
                 self.store.claim_chief_engineer_task("chief-engineer/00", "abc123", paths)
+
+    def test_exact_chief_claim_changes_only_the_requested_received_task(self):
+        first = bound_chief_task(paths=["tests/first.py"])
+        target = bound_chief_task(paths=["tests/target.py"])
+        self.store.put_message(first, "inbound", "received")
+        self.store.put_message(target, "inbound", "received")
+
+        claimed = self.store.claim_chief_engineer_task_by_id(
+            target["id"], "chief-engineer/00", "abc123", ["tests/target.py"], 30,
+        )
+
+        self.assertEqual(claimed["id"], target["id"])
+        self.assertEqual(self.store.get_message(first["id"])["status"], "received")
+        self.assertEqual(self.store.get_message(first["id"])["attempt_count"], 0)
+        self.assertEqual(self.store.get_message(target["id"])["attempt_count"], 1)
+
+    def test_exact_chief_claim_rejects_bad_identity_or_binding_without_delta(self):
+        item = bound_chief_task(paths=["tests/bound.py"])
+        unbound = chief_task()
+        self.store.put_message(item, "inbound", "received")
+        self.store.put_message(unbound, "inbound", "received")
+        before = dict(self.store.get_message(item["id"]))
+
+        self.assertIsNone(self.store.claim_chief_engineer_task_by_id(
+            str(uuid.uuid4()), "chief-engineer/00", "abc123", ["tests/bound.py"], 30,
+        ))
+        for lane, principal, base, paths in (
+            ("chief-engineer/01", "chief-engineer", "abc123", ["tests/bound.py"]),
+            ("chief-engineer/00", "not-chief", "abc123", ["tests/bound.py"]),
+            ("chief-engineer/00", "chief-engineer", "different", ["tests/bound.py"]),
+            ("chief-engineer/00", "chief-engineer", "abc123", ["tests/other.py"]),
+        ):
+            with self.subTest(lane=lane, principal=principal, base=base, paths=paths):
+                with self.assertRaises(InvalidTransition):
+                    self.store.claim_chief_engineer_task_by_id(
+                        item["id"], lane, base, paths, 30, principal,
+                    )
+                after = self.store.get_message(item["id"])
+                self.assertEqual(after["status"], before["status"])
+                self.assertEqual(after["revision"], before["revision"])
+                self.assertEqual(after["attempt_count"], before["attempt_count"])
+        with self.assertRaises(InvalidTransition):
+            self.store.claim_chief_engineer_task_by_id(
+                unbound["id"], "chief-engineer/00", "abc123", ["tests/exact_claim.py"], 30,
+            )
+        self.assertEqual(self.store.get_message(unbound["id"])["status"], "received")
+
+        self.store.claim_chief_engineer_task_by_id(
+            item["id"], "chief-engineer/00", "abc123", ["tests/bound.py"], 30,
+        )
+        with self.assertRaises(InvalidTransition):
+            self.store.claim_chief_engineer_task_by_id(
+                item["id"], "chief-engineer/00", "abc123", ["tests/bound.py"], 30,
+            )
+
+    def test_exact_chief_claim_rejects_malformed_frozen_path_list_without_delta(self):
+        item = bound_chief_task(paths=["a", "b"])
+        item["metadata"]["FROZEN_OWNED_PATHS"] = "ab"
+        item["metadata"]["SCOPE_BINDING_MANIFEST"]["exact_owned_paths"] = "ab"
+        self.store.put_message(item, "inbound", "received")
+        before = dict(self.store.get_message(item["id"]))
+
+        with self.assertRaises(InvalidTransition):
+            self.store.claim_chief_engineer_task_by_id(
+                item["id"], "chief-engineer/00", "abc123", ["a", "b"], 30,
+            )
+
+        after = self.store.get_message(item["id"])
+        self.assertEqual(after["status"], before["status"])
+        self.assertEqual(after["revision"], before["revision"])
+        self.assertEqual(after["attempt_count"], before["attempt_count"])
+        self.store.update_status(item["id"], "failed", worker="chief-engineer")
+        with self.assertRaises(InvalidTransition):
+            self.store.claim_chief_engineer_task_by_id(
+                item["id"], "chief-engineer/00", "abc123", ["tests/bound.py"], 30,
+            )
+
+    def test_exact_chief_claim_blocks_second_mutating_writer_but_not_outbox_probe(self):
+        active = bound_chief_task(paths=["trading_os_bridge/store.py"])
+        read_only = bound_chief_task(paths=["var/outbox"])
+        read_only_overlap = bound_chief_task(paths=["var/outbox"])
+        second = bound_chief_task(paths=["tests/second.py"])
+        for item in (active, read_only, read_only_overlap, second):
+            self.store.put_message(item, "inbound", "received")
+
+        self.store.claim_chief_engineer_task_by_id(
+            active["id"], "chief-engineer/00", "abc123", ["trading_os_bridge/store.py"], 30,
+        )
+        probe = self.store.claim_chief_engineer_task_by_id(
+            read_only["id"], "chief-engineer/00", "abc123", ["var/outbox"], 30,
+        )
+        self.assertEqual(probe["id"], read_only["id"])
+        with self.assertRaises(OwnershipConflict):
+            self.store.claim_chief_engineer_task_by_id(
+                read_only_overlap["id"], "chief-engineer/00", "abc123", ["var/outbox"], 30,
+            )
+        with self.assertRaises(OwnershipConflict):
+            self.store.claim_chief_engineer_task_by_id(
+                second["id"], "chief-engineer/00", "abc123", ["tests/second.py"], 30,
+            )
+        self.assertEqual(self.store.get_message(second["id"])["status"], "received")
+
+    def test_exact_chief_claim_race_has_one_winner(self):
+        item = bound_chief_task(paths=["tests/race.py"])
+        self.store.put_message(item, "inbound", "received")
+        barrier = threading.Barrier(3)
+        results = []
+
+        def claim():
+            barrier.wait()
+            try:
+                results.append(self.store.claim_chief_engineer_task_by_id(
+                    item["id"], "chief-engineer/00", "abc123", ["tests/race.py"], 30,
+                ))
+            except InvalidTransition:
+                results.append(None)
+
+        threads = [threading.Thread(target=claim) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(sum(row is not None for row in results), 1)
+        self.assertEqual(self.store.get_message(item["id"])["attempt_count"], 1)
+
+    def test_exact_expired_reclaim_is_cas_and_preserves_binding(self):
+        item = bound_chief_task(paths=["tests/reclaim.py"])
+        self.store.put_message(item, "inbound", "received")
+        claimed = self.store.claim_chief_engineer_task_by_id(
+            item["id"], "chief-engineer/00", "abc123", ["tests/reclaim.py"], 30,
+        )
+        with self.store.connect() as connection:
+            connection.execute(
+                "UPDATE messages SET lease_until='2000-01-01T00:00:00Z' WHERE id=?", (item["id"],)
+            )
+        self.assertEqual(self.store.recover_expired(), 0)
+        with self.assertRaises(InvalidTransition):
+            self.store.recover_message(item["id"])
+        original_paths = claimed["owned_paths_json"]
+        original_base = claimed["base_commit"]
+        barrier = threading.Barrier(3)
+        results = []
+
+        def reclaim():
+            barrier.wait()
+            try:
+                results.append(self.store.reclaim_chief_engineer_task_by_id(
+                    item["id"], "chief-engineer/00", 30,
+                ))
+            except InvalidTransition:
+                results.append(None)
+
+        threads = [threading.Thread(target=reclaim) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(sum(row is not None for row in results), 1)
+        reclaimed = self.store.get_message(item["id"])
+        self.assertEqual(reclaimed["attempt_count"], 2)
+        self.assertEqual(reclaimed["base_commit"], original_base)
+        self.assertEqual(reclaimed["owned_paths_json"], original_paths)
+        with self.assertRaises(InvalidTransition):
+            self.store.reclaim_chief_engineer_task_by_id(item["id"], "chief-engineer/00", 30)
+
+    def test_legacy_claim_rejects_frozen_task_and_chief_completion_requires_result(self):
+        frozen = bound_chief_task("01", paths=["tests/frozen.py"])
+        self.store.put_message(frozen, "inbound", "received")
+        with self.assertRaises(InvalidTransition):
+            self.store.claim_chief_engineer_task(
+                "chief-engineer/01", "abc123", ["tests/frozen.py"], 30,
+            )
+        self.assertEqual(self.store.get_message(frozen["id"])["status"], "received")
+
+        legacy = chief_task()
+        self.store.put_message(legacy, "inbound", "received")
+        self.store.claim_chief_engineer_task(
+            "chief-engineer/00", "abc123", ["tests/legacy.py"], 30,
+        )
+        with self.assertRaises(InvalidTransition):
+            self.store.update_status(legacy["id"], "completed", worker="chief-engineer")
 
     def test_inbound_processing_cannot_bypass_claim(self):
         received = message()
@@ -301,6 +518,48 @@ class StoreHardeningTests(unittest.TestCase):
             ).fetchone())
             connection.execute("DROP TRIGGER reject_migration_5")
         self.assertEqual(candidate.migrate(), 1)
+
+    def test_disposable_down_migration_reverts_only_explicit_version_and_is_retryable(self):
+        first_three = Path(self.temp.name) / "migrations-v3"
+        first_three.mkdir()
+        for source in MIGRATIONS.glob("00[1-3]_*.sql"):
+            shutil.copyfile(source, first_three / source.name)
+        candidate = self.disposable_store(first_three)
+        self.assertEqual(candidate.migrate(), 3)
+        before = self.migration_snapshot(candidate)
+
+        upgraded = Store(candidate.database, MIGRATIONS)
+        self.assertEqual(upgraded.migrate(), 1)
+        self.assertEqual(upgraded.migrate_down_disposable(3), 1)
+        self.assertEqual(self.migration_snapshot(upgraded), before)
+
+        self.assertEqual(upgraded.migrate(), 1)
+        with upgraded.connect() as connection:
+            connection.execute(
+                """CREATE TRIGGER reject_revision_drop BEFORE DELETE ON schema_migrations
+                   WHEN OLD.version=4 BEGIN SELECT RAISE(ABORT, 'fixture guard'); END"""
+            )
+        guarded_before = self.migration_snapshot(upgraded)
+        with self.assertRaises(sqlite3.DatabaseError):
+            upgraded.migrate_down_disposable(3)
+        self.assertEqual(self.migration_snapshot(upgraded), guarded_before)
+        with upgraded.connect() as connection:
+            connection.execute("DROP TRIGGER reject_revision_drop")
+        self.assertEqual(upgraded.migrate_down_disposable(3), 1)
+        self.assertEqual(self.migration_snapshot(upgraded), before)
+
+    def test_down_migration_rejects_non_disposable_or_unsupported_target_without_mutation(self):
+        before = self.migration_snapshot(self.store)
+        with self.assertRaises(DisposableMigrationRequired):
+            self.store.migrate_down_disposable(3)
+        self.assertEqual(self.migration_snapshot(self.store), before)
+
+        candidate = self.disposable_store()
+        self.assertEqual(candidate.migrate(), 4)
+        disposable_before = self.migration_snapshot(candidate)
+        with self.assertRaises(NotReversibleMigration):
+            candidate.migrate_down_disposable(2)
+        self.assertEqual(self.migration_snapshot(candidate), disposable_before)
 
     def test_decision_versions(self):
         self.assertEqual(self.store.put_decision("DEC-X", "Title", "proposed", "v1"), 1)

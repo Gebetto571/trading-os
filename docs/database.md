@@ -73,8 +73,16 @@ Mum verisi iletişim SQLite'ından ayrıdır. Ham dosyalar yerel `data/` altınd
 PostgreSQL 16 verisi `trading-os_trading_os_market_data` adlı Docker volume'ünde
 tutulur; ikisi de Git ve GitHub dışındadır. Drive kullanılmaz.
 
-Kalıcı yedekler depo dışında `/Users/scm/Projects/trading-os-backups/` altında
+Kalıcı yedekler depo dışında, Mac mini'de `~/TradingOSBackups/` altında
 özel PostgreSQL arşiv biçiminde tutulur. Yedek tamamlandığında `pg_restore -l`
 ile katalog okunabilirliği, SHA-256 özeti ve yalnız kullanıcı erişimli dosya izni
 doğrulanır. Kritik silme öncesinde geçici veritabanına gerçek restore yapılıp zaman
 dilimi bazında satır ve tarih aralıkları ana veritabanıyla karşılaştırılır.
+
+`scripts/backup-database.sh` arşiv ve SHA kontrolünü yapar; gerçek geri yükleme ve
+fiziksel ikinci cihaz doğrulaması manifestte ayrı kalır. 2026-10-02 kurtarma
+denetiminde kaynakla geri yüklenen dört tablonun bütün içeriği sıralı CSV SHA-256
+ile karşılaştırılmıştır. İkinci cihazdaki şifreli paket ve doğrulama kanıtı
+`/Users/scm/Projects/trading-os-backups/mac-mini-20261002/` konumundadır.
+Mac mini denetim kanıtı `/Users/m2pro/Projects/.trading-os-reliability-20261002/`
+altındadır; bu alan Git'e eklenmez. Tarihsel MacBook yedekleri korunur.

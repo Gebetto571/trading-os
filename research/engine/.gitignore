@@ -1,0 +1,10 @@
+# A0 runtime state stays local and is intentionally never versioned.
+.venv/
+__pycache__/
+*.pyc
+runtime/
+results/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.tmp

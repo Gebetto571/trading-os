@@ -3,7 +3,7 @@
 This directory is the primary local Git repository for “Trading OS” and is connected
 to the public GitHub repository `Gebetto571/trading-os`.
 
-- Canonical local checkout: `/Users/scm/Projects/trading-os`.
+- Canonical local checkout: `/Users/m2pro/Projects/trading-os`.
 - Project code, tests, schemas, configuration, deployment material, local databases,
   build output, raw working data, and code-atomic technical documents stay local.
 - Google Drive is not a project storage or synchronization layer for the local Git

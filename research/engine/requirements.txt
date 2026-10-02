@@ -1,0 +1,2 @@
+# Package-local only. Do not promote this dependency to a repository root manifest.
+polars==1.35.2
