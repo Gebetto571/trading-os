@@ -4,7 +4,7 @@
 
 Codex yalnız kullanıcı “Kodlama emrini işleme koy”, “Trading OS gelen kutusunu
 kontrol et” dediğinde veya açık bir GitHub görev/commit/PR bağlantısı verdiğinde
-işi kontrol eder. Yazılım gerçeği `/Users/scm/Projects/trading-os` yerel Git
+işi kontrol eder. Yazılım gerçeği `/Users/m2pro/Projects/trading-os` yerel Git
 deposudur. Güncel Drive `Trading OS` alanı AI hafızası ve görev–sonuç koordinasyon
 katmanıdır; eski Drive kod deposu yolları geçersizdir. Katman sahipliği TOS-DEC-004
 bölüm 7'ye tabidir. Arka planda zamanlanmış veya periyodik kontrol yapılmaz.
@@ -69,6 +69,7 @@ Bu durumlarda Codex görevi uygulamak yerine `status` türünde `approval_requir
 ```text
 claim      Sıradaki alınmış mesaj için süreli işlem sahipliği alır
 claim-task Kayıtlı/onaylı Chief Engineer görevini hat, base commit ve yollarla alır
+accept-task Seçilen UUID'yi incelenmiş SHA-256, gerçek HEAD ve güvenli yollarla alır
 result     Doğrulama raporundan korelasyonlu ve yetki sınırları kapalı sonuç üretir
 status     Claim sahibinin mesajı completed veya failed olarak kapatmasını sağlar
 recover    Belirtilen veya süresi dolmuş sahipliği kullanıcı talimatıyla kurtarır
@@ -88,3 +89,64 @@ başlatmaz.
 - Karantina, arşiv değildir. Şema/bütünlük sorunu çözülmeden dosya tamamlanmış
   kabul edilmez ve ikinci kez çalıştırılmaz. Karantina olayı ve ham dosya özeti
   SQLite denetim kaydında tutulur.
+
+## Cloud Chief sağlık görevi — 2026-10-04
+
+Kurulu bulut ortamının rolü ve başlangıç talimatı `docs/cloud-control.md`
+belgesindedir. Bu yol yalnız kullanıcının seçtiği bir görev için çalışır. Sürekli
+servis, Drive izleyicisi veya zamanlanmış Codex görevi değildir.
+
+1. Cloud Chief tek JSON görev zarfını üretir. Güncel Mac mini HEAD'i,
+   `metadata.local_action="health"`, `chief-engineer/00` hattı ve yalnız
+   `var/outbox` dondurulmuş sahipliği belirtilir.
+2. Zarf mevcut Drive `01_CHATGPT_GELEN` klasörüne konur ve geri okunur. Kullanıcı
+   talimatıyla yalnız bu UUID yerel `var/inbox` alanına alınır; bütün klasör
+   kendiliğinden taranmaz.
+3. Yerel Chief görevin kullanıcı talimatı ve kapsamıyla uyumunu inceler.
+   İncelenen canonical JSON özeti `payload_sha256` olarak belirlenir. JSON
+   dosyasının boşluk ve girintilerini de içeren ham dosya özeti kullanılmaz.
+4. `scripts/local-chief.py` açık UUID, incelenmiş özet ve yerel yollarla
+   çalıştırılır. `accept-task` ile aynı kabul kapısı gerçek HEAD, temiz çalışma
+   alanı, immutable görev içeriği ve frozen yolları doğrular; mevcut süreli
+   sahiplik ve tekrar engeli korunur.
+5. Sabit `scripts/check-system.py --json` komutu yerel Python ortamında çalışır.
+   Başarısızlıkta otomatik onarım yapılmaz. Gerçek çıkış kodu, seçilmiş sağlık
+   durumları ve işlem öncesi/sonrası Git kanıtı sonuç zarfına yazılır.
+6. Sonuç mevcut Drive `02_CODEX_GELEN` klasörüne yüklenir, geri okunur ve Cloud
+   Chief'e aynı görevde inceletilir. Sonuç UUID'si görevin `correlation_id`
+   bağlantısıyla doğrulanmadan aktarım tamamlanmış sayılmaz.
+
+İçe alınmış ve incelenmiş görev için Mac mini'de çalıştırma biçimi:
+
+```sh
+research/engine/.venv/bin/python -B scripts/local-chief.py \
+  --task-id <incelenen-gorev-UUID> \
+  --reviewed-sha256 <incelenen-canonical-payload-SHA256> \
+  --repo /Users/m2pro/Projects/trading-os \
+  --db /Users/m2pro/Projects/trading-os/var/trading_os.db \
+  --inbox /Users/m2pro/Projects/trading-os/var/inbox \
+  --outbox /Users/m2pro/Projects/trading-os/var/outbox
+```
+
+Yerel dizinler kullanıcıya ait, symlink olmayan `0700`; SQLite dosyası `0600`
+olmalıdır. Köprü kurulumu ve zarfın `ingest` işlemi bu yürütücüden önce yapılır.
+Yürütücü migration veya Drive indirmesi yapmaz. Terminal sonuç tekrar çağrılırsa
+doğrulanmış mevcut sonuç geri verilir; sağlık komutu ikinci kez çalışmaz. Yeni
+güncel ölçüm için yeni UUID ve güncel commit ile ayrı görev gerekir.
+
+Eski `claim-task` komutu uyumluluk için korunur; gerçek HEAD ve incelenmiş özet
+kontrollerini kendi başına sağlamaz. Yeni Cloud Chief hattında yalnız yerel kabul
+kapısı kullanılır. Geliştirme işlerinde kabul, test veya yetkilendirme yerine
+geçmez; gerçek diff sahip olunan yollarla ayrıca karşılaştırılır.
+
+Docs-manager dosya bildirimi, bu görev içinde:
+
+| Yol | Tür / amaç | Kanonik sahip | İlişkili mevcut dosya |
+| --- | --- | --- | --- |
+| `trading_os_bridge/local_acceptance.py` | Yerel, incelenmiş tek görev kabul kapısı | Chief Engineer / Git | `trading_os_bridge/cli.py` |
+| `scripts/local-chief.py` | Kullanıcı tetikli sabit sağlık görevi yürütücüsü | Chief Engineer / Git | `scripts/check-system.py` |
+| `tests/test_local_acceptance.py` | Gerçek Git ile kabul sınırı regresyonları | Chief Engineer / Git | `tests/test_cli_integration.py` |
+| `tests/test_local_chief.py` | Tek görev, sabit komut ve sonuç regresyonları | Chief Engineer / Git | `tests/test_cli_integration.py` |
+
+Bu dosyalar bağımsız güvenlik ve yürütme yaşam döngüsü için gereklidir. Yeni
+Markdown belgesi veya ikinci görev kuyruğu oluşturulmamıştır.
