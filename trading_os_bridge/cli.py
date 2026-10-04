@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from .local_acceptance import AcceptanceError, accept_task
 from .store import IntegrityConflict, InvalidTransition, OwnershipConflict, Store
 from .validation import (
     VALID_TYPES, load_conversation_map, load_registry_roles, parse_json_strict,
@@ -258,24 +257,6 @@ def command_claim_task(args: argparse.Namespace) -> int:
     return 0
 
 
-def command_accept_task(args: argparse.Namespace) -> int:
-    try:
-        repository = Path(args.repo)
-        if not repository.is_absolute() or repository.resolve(strict=True) != ROOT.resolve(strict=True):
-            raise AcceptanceError("Repository must be the checkout running this bridge.")
-        row = accept_task(store(), repository, args.id, args.reviewed_sha256, args.lease_seconds)
-    except (AcceptanceError, OSError, sqlite3.Error):
-        # Do not echo arbitrary payload, SQLite, Git or filesystem diagnostics.
-        print(json.dumps({"accepted": False, "error": "Local task acceptance failed."}))
-        return 1
-    print(json.dumps({
-        "accepted": True, "id": row["id"], "payload_sha256": row["payload_sha256"],
-        "base_commit": row["base_commit"], "local_lane": row["local_lane"],
-        "owned_paths": json.loads(row["owned_paths_json"]), "lease_until": row["lease_until"],
-    }, ensure_ascii=False))
-    return 0
-
-
 def command_reclaim_task(args: argparse.Namespace) -> int:
     try:
         row = store().reclaim_chief_engineer_task_by_id(
@@ -516,12 +497,6 @@ def parser() -> argparse.ArgumentParser:
     claim_task_cmd.add_argument("--owned-path", action="append", required=True)
     claim_task_cmd.add_argument("--lease-seconds", type=int, default=1800)
     claim_task_cmd.set_defaults(func=command_claim_task)
-    accept_task_cmd = commands.add_parser("accept-task")
-    accept_task_cmd.add_argument("--id", required=True)
-    accept_task_cmd.add_argument("--reviewed-sha256", required=True)
-    accept_task_cmd.add_argument("--repo", required=True)
-    accept_task_cmd.add_argument("--lease-seconds", type=int, default=1800)
-    accept_task_cmd.set_defaults(func=command_accept_task)
     reclaim_task_cmd = commands.add_parser("reclaim-task")
     reclaim_task_cmd.add_argument("--id", required=True)
     reclaim_task_cmd.add_argument("--lane", required=True)
