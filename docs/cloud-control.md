@@ -3,55 +3,6 @@
 Bu belge ChatGPT bulut sohbetleri ile yerel Codex çalışma alanı arasındaki
 kullanıcı denetimli devir kartıdır.
 
-## Cloud Chief ve Mac mini Chief — 2026-10-04
-
-Cloud Chief için Codex Cloud ortamı `Trading OS — Cloud Chief` adıyla,
-`Gebetto571/trading-os` deposuna bağlı olarak oluşturuldu. Ortam kimliği
-`6ac18f29b0d881918e267c30c26edcaf`; ajan internet erişimi kapalıdır. Ortama sır,
-yerel veritabanı veya ham piyasa verisi eklenmez. Kurulum yalnız mevcut Python
-köprü testlerini hazırlayıp çalıştırır; yerel Mac mini kurulumu değildir.
-
-Cloud Chief öncelik, algoritma, görev kapsamı ve kabul ölçütlerini belirler;
-gelen sonuçları inceler. Mac mini Chief gerçek sürümü ve sistem durumunu okur,
-kabul ettiği görevi uygular, doğrular ve sonuç zarfını geri verir. Kodun ve çalışan
-sistemin uygulayıcısı Mac mini'dir. Bulutun tamamlandı demesi yerel test kanıtının
-yerine geçmez. Ortamın adı veya açıklaması teknik bir yetki kısıtlaması değildir;
-her bulut görevi aşağıdaki rol talimatı ve kapsamla başlatılır.
-
-Yeni Cloud Chief görevine verilecek başlangıç talimatı:
-
-```text
-Rolün cloud-planner; Trading OS Cloud Chief olarak öncelik ve görev kartı hazırla.
-AGENTS.md, docs/cloud-control.md ve ilgili mevcut sözleşmeyi oku.
-Bu görevde dosya değiştirme, commit veya PR oluşturma. Gerçek Mac mini'ye
-erişimin olduğunu varsayma. Yalnız tek UUID'li, gerçek başlangıç commit'ine bağlı,
-dar kapsamlı görev öner. Bulut çıktısı insan onayı değildir.
-Sonuç geldiğinde görev UUID'si, sürüm, test çıkış kodları ve durma koşullarını
-karşılaştır; kanıt yoksa tamamlandı deme. PAPER/LIVE yetkisi yoktur.
-```
-
-Devir mevcut Drive `01_CHATGPT_GELEN` ve `02_CODEX_GELEN` klasörleriyle yapılır.
-Kullanıcı ilgili görevi işleme koyduğunda, yerel `accept-task` kapısı incelemesi
-yapılan canonical JSON SHA-256 özetini, gerçek Git HEAD'i, temiz çalışma alanını,
-hat/tek yazar kimliğini ve dondurulmuş yolları birlikte doğrular. `approval_state`
-alanı bu yerel kabulü oluşturmaz. SHA-256 girdisi rastgele gelen bir zarfın içinden
-otomatik kopyalanmaz; kullanıcının kapsamına uygunluğu incelenen görev seçilir.
-
-İlk otomatik işlem yalnız `metadata.local_action=health` sağlık raporudur.
-`scripts/local-chief.py`, sabit yerel sağlık komutunu çalıştırır; görev gövdesi
-ve `required_tests` metinleri yürütülebilir komut değildir. Üretim verisi, kaynak
-kod ve servisler değiştirilmez; köprü SQLite işlem kaydı ve `var/outbox` sonuç
-zarfı yazılır. İşlem sonrasında HEAD ve izlenen dosyaların değişmediği doğrulanır.
-Sonuç yalnız seçilmiş durum alanlarını taşır; sırlar ve ham loglar taşınmaz.
-
-Kod geliştirme görevi, açık kullanıcı kapsamıyla Chief Engineer tarafından
-uygulanır; bu sağlık yürütücüsü genel amaçlı kod çalıştırma izni vermez. Commit,
-GitHub yayını ve sürüm etkinleştirme görev bazında yetkilendirilir. Veri toplama
-servisi bu sohbetlerden bağımsız çalışmayı sürdürür. Periyodik Drive taraması,
-kendiliğinden görev alma veya sürekli GitHub senkronizasyonu kurulmaz.
-
-Yerel çalıştırma ve kabul adımları `docs/automation-runbook.md` içindedir.
-
 ## Yeni sohbetlere verilecek ana talimat
 
 Mevcut sohbetlerin kullanıcı tarafından verilmiş ilk rol mesajları geçerlidir; bu
@@ -172,7 +123,7 @@ Public kod deposu: <https://github.com/Gebetto571/trading-os>
 - Chief Engineer → ChatGPT: Drive `02_CODEX_GELEN` içindeki korelasyonlu sonuç zarfı
 - Alternatif teknik referans: GitHub issue/commit/PR bağlantısı
 - AI hafızası ve koordinasyon: güncel Drive `Trading OS` alanı
-- Kalıcı kod ve Git-kanonik teknik belge: `/Users/m2pro/Projects/trading-os`
+- Kalıcı kod ve Git-kanonik teknik belge: `/Users/scm/Projects/trading-os`
 - Sürüm ve uzak yedek: public GitHub `Gebetto571/trading-os`
 
 ## Codex'i çalıştırma
